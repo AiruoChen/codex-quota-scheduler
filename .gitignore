@@ -1,0 +1,15 @@
+node_modules/
+dist/
+coverage/
+.runtime/
+.local/
+.tmp/
+*.log
+.env
+.env.*
+!.env.example
+auth.json
+.codex/
+config/local.json
+.DS_Store
+Thumbs.db

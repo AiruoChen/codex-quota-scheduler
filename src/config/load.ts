@@ -1,0 +1,32 @@
+import { readFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { AppError } from "../shared/errors.js";
+import { requireNumber, requireRecord, requireString } from "../shared/validation.js";
+
+export interface AppConfig {
+  schemaVersion: 1;
+  provider: "mock" | "codex";
+  pollIntervalMs: number;
+  quotaMaxAgeMs: number;
+  reservePercent: number;
+  limitId: string;
+  tasksFile: string;
+}
+
+export async function loadConfig(path: string): Promise<AppConfig> {
+  const configPath = resolve(path);
+  const data = requireRecord(JSON.parse(await readFile(configPath, "utf8")), "配置");
+  if (data.schemaVersion !== 1) throw new AppError("CONFIG_VERSION", "仅支持 schemaVersion=1");
+  if (data.provider !== "mock" && data.provider !== "codex") {
+    throw new AppError("INVALID_CONFIG", "provider 必须是 mock 或 codex");
+  }
+  return {
+    schemaVersion: 1,
+    provider: data.provider,
+    pollIntervalMs: requireNumber(data.pollIntervalMs, "pollIntervalMs", 1000, 86400000),
+    quotaMaxAgeMs: requireNumber(data.quotaMaxAgeMs, "quotaMaxAgeMs", 1000, 86400000),
+    reservePercent: requireNumber(data.reservePercent, "reservePercent", 0, 100),
+    limitId: requireString(data.limitId, "limitId"),
+    tasksFile: resolve(dirname(configPath), requireString(data.tasksFile, "tasksFile")),
+  };
+}

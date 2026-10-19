@@ -101,7 +101,7 @@ test("从 v1 数据库迁移并保留已有指令；较新版本被拒绝", asyn
     const migrated = new SqliteStore(path, clock);
     try {
       assert.equal((await migrated.tasks.revisions("one"))[0]?.promptSnapshot, "legacy");
-      assert.equal(migrated.database.connection.prepare("PRAGMA user_version").get()?.user_version, 2);
+      assert.equal(migrated.database.connection.prepare("PRAGMA user_version").get()?.user_version, 3);
     } finally { migrated.close(); }
     const future = new DatabaseSync(path);
     future.exec("PRAGMA user_version=99");

@@ -1,4 +1,4 @@
-import type { RunUpdate, StoredTask, TaskDefinition, TaskRevision, TaskRun, TaskStatus } from "./task.js";
+import type { ExecutionOutcome, ExecutionSink, RunUpdate, StoredTask, TaskDefinition, TaskRevision, TaskRun, TaskStatus } from "./task.js";
 
 export interface Clock {
   now(): Date;
@@ -23,7 +23,7 @@ export interface RunRepository {
 }
 
 export interface TaskExecutor {
-  execute(task: TaskDefinition, prompt: string, signal: AbortSignal): Promise<TaskRun>;
+  execute(run: TaskRun, signal: AbortSignal, sink: ExecutionSink): Promise<ExecutionOutcome>;
 }
 
 export interface Notifier {

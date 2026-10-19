@@ -8,6 +8,7 @@ interface PendingRequest {
   reject: (error: AppError) => void;
   timer: NodeJS.Timeout;
   method: string;
+  cleanup: () => void;
 }
 
 function rpcError(error: unknown, method: string): AppError {
@@ -28,6 +29,9 @@ function rpcError(error: unknown, method: string): AppError {
 
 /** A single stdio JSON-RPC connection. It never logs raw stderr, results or errors. */
 export class StdioRpcClient {
+  private readonly notifications = new Set<(method: string, params: unknown) => void>();
+  private readonly failures = new Set<(error: AppError) => void>();
+  private serverRequest: ((method: string, params: unknown) => unknown) | undefined;
   private readonly child: ChildProcessWithoutNullStreams;
   private readonly pending = new Map<number, PendingRequest>();
   private readonly closed: Promise<void>;
@@ -55,14 +59,23 @@ export class StdioRpcClient {
     this.child.stderr.resume();
   }
 
-  request(method: string, params?: unknown): Promise<unknown> {
+  request(method: string, params?: unknown, signal?: AbortSignal): Promise<unknown> {
     if (this.failure) return Promise.reject(this.failure);
+    if (signal?.aborted) return Promise.reject(new AppError("EXECUTION_CANCELLED", "执行已请求停止。"));
     const id = ++this.sequence;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.fail(new AppError("CODEX_TIMEOUT", `Codex ${method} 请求超时，请检查网络、登录状态或调整 requestTimeoutMs。`));
       }, this.options.requestTimeoutMs);
-      this.pending.set(id, { resolve, reject, timer, method });
+      const abort = () => {
+        this.pending.delete(id);
+        clearTimeout(timer);
+        cleanup();
+        reject(new AppError("EXECUTION_CANCELLED", "执行已请求停止。"));
+      };
+      const cleanup = () => signal?.removeEventListener("abort", abort);
+      signal?.addEventListener("abort", abort, { once: true });
+      this.pending.set(id, { resolve, reject, timer, method, cleanup });
       this.write({ id, method, ...(params === undefined ? {} : { params }) });
     });
   }
@@ -70,6 +83,21 @@ export class StdioRpcClient {
   notify(method: string): void {
     if (this.failure) throw this.failure;
     this.write({ method });
+  }
+
+  onNotification(listener: (method: string, params: unknown) => void): () => void {
+    this.notifications.add(listener);
+    return () => { this.notifications.delete(listener); };
+  }
+
+  onFailure(listener: (error: AppError) => void): () => void {
+    this.failures.add(listener);
+    if (this.failure) listener(this.failure);
+    return () => { this.failures.delete(listener); };
+  }
+
+  handleServerRequests(handler: (method: string, params: unknown) => unknown): void {
+    this.serverRequest = handler;
   }
 
   private write(message: unknown): void {
@@ -96,8 +124,15 @@ export class StdioRpcClient {
       if (!isRecord(message)) return this.invalid();
       if (typeof message.method === "string") {
         if (message.id !== undefined) {
-          // Read-only mode does not service authentication refresh or approval requests.
-          this.write({ id: message.id, error: { code: -32601, message: "Unsupported client request" } });
+          try {
+            const result = this.serverRequest?.(message.method, message.params);
+            this.write(result === undefined
+              ? { id: message.id, error: { code: -32601, message: "Unsupported client request" } }
+              : { id: message.id, result });
+          } catch { this.fail(new AppError("CODEX_CLIENT_ERROR", "处理 Codex 请求时发生错误。")); }
+        } else {
+          try { for (const listener of this.notifications) listener(message.method, message.params); }
+          catch { this.fail(new AppError("CODEX_CLIENT_ERROR", "保存 Codex 执行事件失败。")); }
         }
         continue;
       }
@@ -106,6 +141,7 @@ export class StdioRpcClient {
       if (!request) continue;
       this.pending.delete(message.id);
       clearTimeout(request.timer);
+      request.cleanup();
       if (message.error !== undefined) request.reject(rpcError(message.error, request.method));
       else if (Object.hasOwn(message, "result")) request.resolve(message.result);
       else { request.reject(new AppError("CODEX_PROTOCOL_ERROR", "Codex 响应缺少 result 或 error。")); this.invalid(); }
@@ -118,12 +154,15 @@ export class StdioRpcClient {
   }
 
   private fail(error: AppError): void {
+    const first = this.failure === undefined;
     this.failure ??= error;
     for (const request of this.pending.values()) {
       clearTimeout(request.timer);
+      request.cleanup();
       request.reject(this.failure);
     }
     this.pending.clear();
+    if (first) for (const listener of this.failures) listener(this.failure);
   }
 
   private async waitForClose(): Promise<boolean> {

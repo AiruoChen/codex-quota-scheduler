@@ -18,6 +18,9 @@ flowchart LR
   Provider --> Codex[Codex App Server]
   App --> Policy[调度条件判断]
   Policy --> Preview[JSON 预览结果]
+  App --> Manual[手动执行服务]
+  Manual --> Store
+  Manual --> Turn[Codex 回合与中断]
 ```
 
 当前 preview 不创建任务运行、不消费队列、不调用执行器。多次预览可能返回同一个候选任务。
@@ -41,7 +44,7 @@ account/read（refreshToken=false）、account/rateLimits/read。成功或失败
 - `QuotaProvider.read()`：返回标准化 `QuotaSnapshot`，不泄露认证令牌。
 - `QuotaSnapshot`：保留来源、采集时间和多个额度桶；窗口按实际分钟数识别。
 - `TaskDefinition`：保存指令位置、项目、优先级和会话意图。
-- `TaskExecutor.execute()`：接收指令快照与取消信号，返回 `TaskRun`。
+- `TaskExecutor.execute()`：接收持久化运行快照、取消信号与事件接收器，返回 `ExecutionOutcome`；运行状态由应用层落盘。
 - `TaskRepository` / `RunRepository`：分别管理版本化任务定义、不可变快照和运行状态。
 - `Clock`：业务逻辑可使用固定时间测试，避免依赖真实等待。
 - `Notifier`：预留本地通知实现。
@@ -66,7 +69,7 @@ account/read（refreshToken=false）、account/rateLimits/read。成功或失败
 SQLite 使用 Node 内置 node:sqlite，无第三方运行时依赖；npm 脚本为 Node 22.12 设置必要的实验参数。
 Database 统一管理事务、迁移、完整性检查与 VACUUM INTO 备份；任务和运行记录分别由仓储封装。
 数据库以 application_id 标识，拒绝打开已知的其他应用数据库。schema 版本使用 PRAGMA user_version，
-当前版本 2；升级事务内重读版本，迁移失败回滚，不自动重置数据。
+当前版本 3；升级事务内重读版本，迁移失败回滚，不自动重置数据。
 
 tasks 保存当前定义与指令，task_versions 保存每次编辑的定义和指令快照；runs 保存准备运行时的版本、
 完整定义、指令、SHA-256 和运行状态。修改或归档任务不改变旧运行记录。归档的 ID 保留，不允许被新任务复用。
@@ -79,4 +82,21 @@ tasks 保存当前定义与指令，task_versions 保存每次编辑的定义和
 
 应用只在需要任务数据时打开数据库，status 不依赖 SQLite 连接；CLI finally 关闭连接。
 demo 强制使用模拟额度与内存数据库；任务管理命令不触发真实额度查询或任务执行。
+
+## 手动执行
+
+ManualExecutionService 原子地创建运行记录并取得 execution_lock，或只取得已有 queued/waiting_quota 记录的执行权。
+一份数据库同时只允许一个执行者；重复启动已运行记录被拒绝。正常保存结束状态后释放执行权，落盘失败保留锁用于核对。
+取消标记存在 execution_lock，由执行进程定期读取；Ctrl+C、超时同样通过 AbortSignal 传递。
+
+CodexExecutor 用同一 App Server 连接检查账户/额度、创建或续接会话，再核对账户并启动回合。
+源码中的枚举以实测版本生成的 Schema 为准：thread sandbox 使用 read-only/workspace-write，approvalPolicy 使用 on-request，
+turn sandboxPolicy 则使用 readOnly/workspaceWrite。服务端实际生效的策略仍受 Codex 的托管限制约束。
+
+turn-runner 隔离通知与反向请求处理，缓存早于 turn/start 响应的事件，严格匹配 threadId/turnId。
+agentMessage 完成项为最终文本依据，turn/completed 才能确定回合终态；interrupt RPC 成功不等同于任务已停止。
+收到审批或输入请求时请求停止，保存 needs_attention；连接断开或提交响应丢失时同样不能自动重发。
+execution_events 只记录所需的生命周期元数据，不保存原始审批参数、原始错误和推理内容。
+运行最终输出保存在 runs 中；流式部分输出定期保存，任务和指令快照不变。
+
 后台服务、管理界面、托盘与通知放在后续阶段，复用同一应用层。

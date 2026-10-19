@@ -15,6 +15,11 @@ export interface TaskDefinition {
   promptFile: string;
   priority: number;
   model?: string;
+  execution?: {
+    sandbox: "read-only" | "workspace-write";
+    timeoutMs: number;
+    effort?: "low" | "medium" | "high" | "xhigh";
+  };
   session: { mode: "new" } | { mode: "resume"; threadId: string };
 }
 
@@ -29,6 +34,7 @@ export interface TaskRun {
   startedAt: string | null;
   completedAt: string | null;
   threadId: string | null;
+  turnId?: string | null;
   promptSnapshot: string;
   output: string;
   error: string | null;
@@ -56,6 +62,29 @@ export interface RunUpdate {
   startedAt?: string | null;
   completedAt?: string | null;
   threadId?: string | null;
+  turnId?: string | null;
   output?: string;
   error?: string | null;
+}
+
+export interface ExecutionEvent {
+  sequence: number;
+  runId: string;
+  createdAt: string;
+  type: string;
+  data: Record<string, unknown>;
+}
+
+export interface ExecutionOutcome {
+  status: "succeeded" | "failed" | "cancelled" | "needs_attention" | "waiting_quota";
+  output: string;
+  error: string | null;
+}
+
+export interface ExecutionSink {
+  event(type: string, data: Record<string, unknown>): void;
+  thread(threadId: string): void;
+  submitted(): void;
+  turn(turnId: string): void;
+  output(text: string): void;
 }

@@ -11,8 +11,9 @@ const help = `用法：npm start -- 命令 [--config 文件路径]
   task list | show ID | add JSON文件 | import JSON数组文件
   task update JSON文件 --revision N
   task enable ID --revision N | disable ID --revision N | delete ID --revision N
-  task history ID
+  task history ID | run ID
   runs prepare 任务ID | list 任务ID | show 运行ID
+  runs start 运行ID | cancel 运行ID | events 运行ID | recover 运行ID
   storage init | check | backup 新备份文件
 默认优先 config/local.json，否则 config/example.json。demo 使用模拟数据和内存数据库。
 runs prepare 只保存 queued 记录和指令快照，不提交任务。`;
@@ -44,8 +45,8 @@ async function main(): Promise<unknown> {
   if (needsRevision ? !Number.isSafeInteger(revision) || revision! < 1 : revision !== undefined) invalid();
   if (!["status", "tasks", "preview", "demo", "config", "task", "runs", "storage"].includes(command)) invalid();
   if (command === "task" && !(action === "list" && args.length === 1
-    || ["show", "add", "import", "update", "enable", "disable", "delete", "history"].includes(action ?? "") && args.length === 2)) invalid();
-  if (command === "runs" && (!["prepare", "list", "show"].includes(action ?? "") || args.length !== 2)) invalid();
+    || ["show", "add", "import", "update", "enable", "disable", "delete", "history", "run"].includes(action ?? "") && args.length === 2)) invalid();
+  if (command === "runs" && (!["prepare", "list", "show", "start", "cancel", "events", "recover"].includes(action ?? "") || args.length !== 2)) invalid();
   if (command === "storage" && !(action === "backup" && args.length === 2 || ["init", "check"].includes(action ?? "") && args.length === 1)) invalid();
 
   if (command === "config") {
@@ -66,6 +67,18 @@ async function main(): Promise<unknown> {
 
   const config = await loadConfig(configPath);
   const app = createApp(command === "demo" ? { ...config, provider: "mock", storage: { databasePath: ":memory:" } } : config);
+  async function execute(id: string, create: boolean) {
+    const controller = new AbortController();
+    const stop = () => controller.abort();
+    process.once("SIGINT", stop); process.once("SIGTERM", stop);
+    try {
+      const execution = await app.execution();
+      const started = (runId: string) => console.error(JSON.stringify({ event: "run_started", runId }));
+      const run = create ? await execution.runTask(id, controller.signal, started) : await execution.start(id, controller.signal, started);
+      if (!["succeeded", "cancelled"].includes(run.status)) process.exitCode = 1;
+      return run;
+    } finally { process.removeListener("SIGINT", stop); process.removeListener("SIGTERM", stop); }
+  }
   try {
     if (args.length === 0) {
       if (command === "status") return await app.status();
@@ -90,11 +103,16 @@ async function main(): Promise<unknown> {
       if (action === "enable" || action === "disable") return await service.enable(value, action === "enable", revision!);
       if (action === "delete") { await store.tasks.remove(value, revision!); return { archived: value }; }
       if (action === "history") return await store.tasks.revisions(value);
+      if (action === "run") return await execute(value, true);
     }
     if (command === "runs" && args.length === 2 && value) {
       const store = await app.storage();
       if (action === "prepare") { await app.taskService(); return await store.runs.create(value); }
       if (action === "list") return await store.runs.listByTask(value);
+      if (action === "start") return await execute(value, false);
+      if (action === "cancel") return store.execution.cancel(value);
+      if (action === "events") return store.execution.events(value);
+      if (action === "recover") return store.execution.recover(value);
       if (action === "show") {
         const run = await store.runs.get(value);
         if (!run) throw new AppError("RUN_NOT_FOUND", "运行记录不存在。");

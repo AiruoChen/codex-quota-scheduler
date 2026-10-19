@@ -62,17 +62,18 @@ export async function resolveCodexExecutable(command: string): Promise<{ executa
     : "找不到 Codex CLI。请安装 Codex 并加入 PATH，或设置 codex.executable。");
 }
 
-export async function detectCodex(options: CodexOptions): Promise<CodexLaunch> {
+export async function detectCodex(options: CodexOptions, signal?: AbortSignal): Promise<CodexLaunch> {
   const resolved = await resolveCodexExecutable(options.executable);
   const args = [...resolved.args, ...options.args];
   const env = { ...process.env, ...(options.home === undefined ? {} : { CODEX_HOME: options.home }) };
   let stdout: string;
   try {
     ({ stdout } = await promisify(execFile)(resolved.executable, [...args, "--version"], {
-      env, timeout: options.requestTimeoutMs, windowsHide: true, maxBuffer: 65536, encoding: "utf8",
+      env, timeout: options.requestTimeoutMs, windowsHide: true, maxBuffer: 65536, encoding: "utf8", ...(signal ? { signal } : {}),
     }));
   } catch (error: unknown) {
     const info = error as NodeJS.ErrnoException & { killed?: boolean };
+    if (signal?.aborted) throw new AppError("EXECUTION_CANCELLED", "执行已请求停止。");
     if (info.killed) throw new AppError("CODEX_TIMEOUT", "Codex 版本检查超时，请检查启动器或调整 requestTimeoutMs。");
     throw new AppError("CODEX_START_FAILED", "Codex 版本检查失败，请检查可执行文件及运行权限。");
   }

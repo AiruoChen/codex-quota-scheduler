@@ -8,12 +8,12 @@ import { definitionOf, promptHash, readStoredTask } from "./task-repository.js";
 const transitions: Record<TaskStatus, readonly TaskStatus[]> = {
   queued: ["queued", "waiting_quota", "running", "cancelled", "needs_attention"],
   waiting_quota: ["waiting_quota", "running", "cancelled", "needs_attention"],
-  running: ["running", "succeeded", "failed", "cancelled", "needs_attention"],
+  running: ["running", "succeeded", "failed", "cancelled", "needs_attention", "waiting_quota"],
   needs_attention: ["needs_attention", "cancelled"],
   succeeded: [], failed: [], cancelled: [],
 };
 
-function readRun(value: unknown): TaskRun {
+export function readRun(value: unknown): TaskRun {
   try {
     const run = JSON.parse(String(value)) as TaskRun;
     if (!run || typeof run.id !== "string" || typeof run.promptSnapshot !== "string"
@@ -21,6 +21,7 @@ function readRun(value: unknown): TaskRun {
       || run.taskSnapshot.id !== run.taskId || !Number.isInteger(run.taskRevision) || run.taskRevision < 1
       || typeof run.output !== "string" || !(run.error === null || typeof run.error === "string")
       || !(run.threadId === null || typeof run.threadId === "string")
+      || !(run.turnId === undefined || run.turnId === null || typeof run.turnId === "string")
       || !Number.isFinite(Date.parse(run.createdAt))
       || ![run.startedAt, run.completedAt].every((time) => time === null || typeof time === "string" && Number.isFinite(Date.parse(time)))) throw new Error("Invalid run");
     definitionOf(run.taskSnapshot);
@@ -32,19 +33,22 @@ export class SqliteRunRepository implements RunRepository {
   constructor(private readonly db: Database, private readonly clock: Clock) {}
 
   async create(taskId: string): Promise<TaskRun> {
-    return this.db.transaction(() => {
-      const row = this.db.connection.prepare("SELECT * FROM tasks WHERE id=? AND deleted_at IS NULL").get(taskId);
-      if (!row) throw new AppError("TASK_NOT_FOUND", "任务不存在或已归档。");
-      const task = readStoredTask(row);
-      const run: TaskRun = {
-        id: randomUUID(), taskId, taskRevision: task.revision, taskSnapshot: definitionOf(task),
-        promptSnapshot: task.promptSnapshot, promptHash: task.promptHash,
-        status: "queued", createdAt: this.clock.now().toISOString(), startedAt: null, completedAt: null,
-        threadId: null, output: "", error: null,
-      };
-      this.db.connection.prepare("INSERT INTO runs VALUES (?, ?, ?)").run(run.id, taskId, JSON.stringify(run));
-      return run;
-    });
+    return this.db.transaction(() => this.insert(taskId));
+  }
+
+  /** Used by the execution repository inside its atomic create-and-claim transaction. */
+  insert(taskId: string): TaskRun {
+    const row = this.db.connection.prepare("SELECT * FROM tasks WHERE id=? AND deleted_at IS NULL").get(taskId);
+    if (!row) throw new AppError("TASK_NOT_FOUND", "任务不存在或已归档。");
+    const task = readStoredTask(row);
+    const run: TaskRun = {
+      id: randomUUID(), taskId, taskRevision: task.revision, taskSnapshot: definitionOf(task),
+      promptSnapshot: task.promptSnapshot, promptHash: task.promptHash,
+      status: "queued", createdAt: this.clock.now().toISOString(), startedAt: null, completedAt: null,
+      threadId: null, output: "", error: null,
+    };
+    this.db.connection.prepare("INSERT INTO runs VALUES (?, ?, ?)").run(run.id, taskId, JSON.stringify(run));
+    return run;
   }
 
   async get(id: string): Promise<TaskRun | null> {
@@ -66,7 +70,7 @@ export class SqliteRunRepository implements RunRepository {
       if (!transitions[run.status].includes(update.status)) throw new AppError("RUN_TRANSITION", "不允许此运行状态转换。");
       // Copy only mutable fields; task and prompt snapshots are immutable.
       const next: TaskRun = { ...run, status: update.status };
-      for (const key of ["startedAt", "completedAt", "threadId", "output", "error"] as const) {
+      for (const key of ["startedAt", "completedAt", "threadId", "turnId", "output", "error"] as const) {
         if (update[key] !== undefined) Object.assign(next, { [key]: update[key] });
       }
       if (next.status === "running" && next.startedAt === null) next.startedAt = this.clock.now().toISOString();

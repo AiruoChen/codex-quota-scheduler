@@ -71,7 +71,7 @@ runs prepare 保存一个状态为 queued 的运行记录，不启动 Codex，�
 之后修改或归档任务，不会改变这个快照。
 
 执行器将来通过 RunRepository 更新状态、输出和时间，不能改写指令或任务快照。
-终态记录不能重新变为 running；提交结果不明等执行恢复属于后续模块，目前不会自动重发或启动 queued 记录。
+终态记录不能重新变为 running；手动执行见 [执行说明](EXECUTION.md)。程序不会自动启动 queued 记录或重发结果不明的任务。
 
 ## 配置管理
 
@@ -125,9 +125,9 @@ npm.cmd start -- task list
 - tasks/service.ts：文件导入、指令读取及任务编辑。
 - config/manage.ts：配置写锁、有效备份与原子保存。
 
-当前数据库 schema=2。升级按顺序在事务中执行；较新的 schema 会被拒绝，不能使用旧程序覆盖它。
+当前数据库 schema=3，新增执行权和执行事件表。升级按顺序在事务中执行；较新的 schema 会被拒绝，不能使用旧程序覆盖它。
 SQLite、个人配置、备份及真实任务均应保存在 .runtime/ 或 .local/，不提交到 GitHub。
-当前没有执行器和自动取任务机制，prepared 记录只是后续执行所需的持久化基础。
+prepared 记录可以通过 runs start 显式启动；当前没有自动取任务机制。
 
 实现依据：[Node.js 22.12 SQLite 文档](https://nodejs.org/download/release/v22.12.0/docs/api/sqlite.html)、
 [SQLite 事务](https://www.sqlite.org/lang_transaction.html)、[SQLite VACUUM INTO](https://www.sqlite.org/lang_vacuum.html)。

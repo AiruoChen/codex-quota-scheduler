@@ -6,6 +6,7 @@ import { QuotaMonitor } from "./monitor/quota-monitor.js";
 import { evaluateQueue } from "./scheduler/evaluate.js";
 import { TaskService } from "./tasks/service.js";
 import type { SqliteStore } from "./storage/sqlite-store.js";
+import { ManualExecutionService } from "./executor/manual-service.js";
 
 export function createApp(config: AppConfig, clock: Clock = systemClock) {
   const provider = config.provider === "mock" ? new MockQuotaProvider(clock) : new AppServerQuotaProvider(config.codex, clock);
@@ -32,6 +33,7 @@ export function createApp(config: AppConfig, clock: Clock = systemClock) {
     status: () => monitor.sample(),
     storage,
     taskService,
+    async execution() { return new ManualExecutionService(config, await storage(), clock); },
     async tasks() { await taskService(); return (await storage()).tasks.list(); },
     async close() { closed = true; await opening?.catch(() => {}); store?.close(); },
     async preview() {

@@ -37,6 +37,19 @@ export function parseTask(value: unknown, base: string, label = "task"): TaskDef
       : { mode: "resume", threadId: requireString(session.threadId, "threadId") },
   };
   if (data.model !== undefined) task.model = requireString(data.model, "model");
+  if (data.execution !== undefined) {
+    const execution = requireRecord(data.execution, "execution");
+    const sandbox = execution.sandbox ?? "read-only";
+    if (sandbox !== "read-only" && sandbox !== "workspace-write") throw new AppError("INVALID_TASK", "execution.sandbox 必须是 read-only 或 workspace-write");
+    task.execution = {
+      sandbox,
+      timeoutMs: execution.timeoutMs === undefined ? 900000 : requireNumber(execution.timeoutMs, "execution.timeoutMs", 100, 86400000),
+    };
+    if (execution.effort !== undefined) {
+      if (!["low", "medium", "high", "xhigh"].includes(String(execution.effort))) throw new AppError("INVALID_TASK", "不支持此 reasoning effort");
+      task.execution.effort = execution.effort as "low" | "medium" | "high" | "xhigh";
+    }
+  }
   return task;
 }
 

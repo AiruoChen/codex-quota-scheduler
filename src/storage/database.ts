@@ -20,6 +20,15 @@ export const migrations = [
    ) STRICT;
    INSERT INTO task_versions SELECT id, revision, definition_json, prompt_snapshot, prompt_hash, updated_at FROM tasks;
    CREATE INDEX runs_by_task ON runs(task_id);`,
+  `CREATE TABLE execution_lock (
+     singleton INTEGER PRIMARY KEY CHECK(singleton=1), run_id TEXT NOT NULL UNIQUE REFERENCES runs(id),
+     owner_pid INTEGER NOT NULL, cancel_requested INTEGER NOT NULL DEFAULT 0
+   ) STRICT;
+   CREATE TABLE execution_events (
+     sequence INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL REFERENCES runs(id),
+     created_at TEXT NOT NULL, type TEXT NOT NULL, data_json TEXT NOT NULL
+   ) STRICT;
+   CREATE INDEX events_by_run ON execution_events(run_id, sequence);`,
 ];
 
 export class Database {

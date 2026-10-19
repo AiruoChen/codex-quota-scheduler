@@ -3,7 +3,7 @@
 本地运行的 Codex 额度监控与任务调度项目，面向 Windows，采用 TypeScript + Node.js。
 目标：提前维护任务，在账户额度恢复且其他限制允许时，自动提交给 Codex。
 
-**当前已完成真实额度读取、任务与配置持久化管理。默认演示使用模拟数据和内存存储；任务发送、持续监控和执行中的崩溃恢复尚未实现。**
+**当前已完成真实额度读取、持久化管理及手动任务执行。默认演示使用模拟数据和内存存储；持续监控与自动调度尚未实现。**
 
 ## 快速开始
 
@@ -35,6 +35,22 @@ npm.cmd start -- task list
 默认创建被 Git 忽略的 `config/local.json`，数据库为 `.runtime/state.sqlite`。
 首次任务访问会从 `tasksFile` 导入任务并保存提示词快照，之后以数据库为准；编辑源 JSON 不会自动覆盖已有任务。
 任务编辑、版本检查、历史、备份和恢复见 [持久化管理说明](docs/PERSISTENCE.md)。
+
+## 手动执行任务
+
+已有个人配置和任务后，将 provider 设置为 codex，再执行指定任务：
+
+```powershell
+npm.cmd start -- config set provider codex
+npm.cmd start -- task run review-project
+npm.cmd start -- runs list review-project
+```
+
+执行使用数据库中的指令快照，检查真实额度与 ChatGPT 登录，默认只读权限。
+命令等待完成后输出运行记录；启动时在 stderr 显示 runId。另一个终端可使用
+`npm.cmd start -- runs cancel 运行ID` 请求取消。
+已有 queued 记录可使用 `runs start 运行ID` 启动；`runs events 运行ID` 查看事件。
+具体权限、超时、续接和异常处理见 [手动执行说明](docs/EXECUTION.md)。
 
 ## 命令
 
@@ -93,7 +109,8 @@ npm.cmd start -- status --config config/codex.example.json
 批量导入示例位于 `examples/tasks.json`，提示词位于 `examples/prompts/`。
 任务中的 `projectDir`、`promptFile` 相对于任务 JSON 文件位置解析。
 `priority` 越大越优先，`enabled` 控制是否进入候选队列。模型可选，当前不硬编码模型名称。
-`session` 支持描述新会话或指定 `threadId` 的续接意图；真实执行待开发。
+`session` 支持新会话或指定 `threadId` 续接；续接前会检查项目和活动状态。
+`execution` 可配置 read-only / workspace-write、timeoutMs 和 effort，缺省为只读、15 分钟超时。
 个人任务与输出请放入 `.local/` 和 `.runtime/`，这两个目录均不提交。
 
 ## 模块
@@ -107,7 +124,7 @@ src/
   tasks/           任务文件解析、导入和版本编辑服务
   monitor/         单次采样入口，预留持续监控
   scheduler/       纯函数调度条件判断
-  executor/        真实执行器占位
+  executor/        手动执行服务、Codex 接入与回合事件处理
   storage/         SQLite、版本迁移、任务/运行仓储和备份
   shared/          错误与校验工具
   app.ts           组合各模块
@@ -121,10 +138,11 @@ docs/              需求、架构和分阶段开发路线
 
 ## 开发顺序
 
-下一块是 **手动任务执行**，具体任务与验收见 [开发路线](docs/ROADMAP.md)。
+下一块是 **持续额度监控**，具体任务与验收见 [开发路线](docs/ROADMAP.md)。
 整体职责与数据流见 [架构说明](docs/ARCHITECTURE.md)，产品边界见 [需求清单](docs/REQUIREMENTS.md)。
 
-目前已持久化任务定义、指令版本和运行状态。自动调度上线前仍需实现执行权管理、重复提交防护及执行中的崩溃恢复。
+当前手动执行已串行化并防止重复启动同一记录；遗留执行权需人工核对。
+自动调度上线前仍需完成刷新事件、队列策略及更完整的运行恢复。
 
 ## 接口依据
 

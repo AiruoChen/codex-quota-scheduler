@@ -6,7 +6,7 @@ async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const command = args.shift() ?? "help";
   if (command === "help" || command === "--help" || command === "-h") {
-    console.log("用法：npm start -- <status|tasks|preview|demo> [--config 文件路径]\n默认配置：config/example.json（模拟数据）。demo 等同于 preview。真实接入待开发。");
+    console.log("用法：npm start -- <status|tasks|preview|demo> [--config 文件路径]\n默认配置：config/example.json（模拟数据）。真实读取使用 --config config/codex.example.json。demo 等同于 preview。");
     return;
   }
   if (!["status", "tasks", "preview", "demo"].includes(command)) {

@@ -14,12 +14,26 @@ flowchart LR
   App --> Monitor[单次额度采样]
   Monitor --> Provider[QuotaProvider]
   Provider --> Mock[模拟适配器]
-  Provider -. 待实现 .-> Codex[Codex App Server]
+  Provider --> Codex[Codex App Server]
   App --> Policy[调度条件判断]
   Policy --> Preview[JSON 预览结果]
 ```
 
 当前 preview 不创建任务运行、不消费队列、不调用执行器。多次预览可能返回同一个候选任务。
+
+## 真实读取连接
+
+`launcher.ts` 从 PATH 或配置路径发现 CLI，校验 `--version`，处理原生可执行文件及标准 npm Windows 启动器。
+`rpc-client.ts` 通过独立子进程的 stdio 连接 App Server，处理 JSONL 分帧、请求 ID 匹配、超时和连接关闭。
+所有启动参数以数组传入，不拼接 shell 命令。stderr 被消费但不对外输出，RPC 原始错误只用于分类。
+
+`AppServerQuotaProvider.read()` 每次创建短连接，按顺序发送 initialize、initialized、
+account/read（refreshToken=false）、account/rateLimits/read。成功或失败均在 finally 中回收子进程。
+缺少登录、非 ChatGPT 登录、未知协议和网络错误分别返回稳定错误码，绝不回退为模拟数据。
+工作区 ID 只采信接口实际返回的信息，不从邮箱或套餐推断。
+
+采集时间在收到额度响应后生成。每次查询重新读取账户，避免缓存旧账户状态；以后持续监控可复用底层连接，
+但需要另行实现更新通知、账户变化、取消与退避逻辑。
 
 ## 稳定接口
 

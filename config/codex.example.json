@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "provider": "codex",
+  "pollIntervalMs": 60000,
+  "quotaMaxAgeMs": 120000,
+  "reservePercent": 10,
+  "limitId": "codex",
+  "tasksFile": "../examples/tasks.json",
+  "codex": {
+    "executable": "codex",
+    "args": [],
+    "requestTimeoutMs": 15000,
+    "shutdownTimeoutMs": 1000
+  }
+}

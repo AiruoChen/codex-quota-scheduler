@@ -7,7 +7,7 @@ import { evaluateQueue } from "./scheduler/evaluate.js";
 import { loadTasks } from "./tasks/load.js";
 
 export function createApp(config: AppConfig, clock: Clock = systemClock) {
-  const provider = config.provider === "mock" ? new MockQuotaProvider(clock) : new AppServerQuotaProvider();
+  const provider = config.provider === "mock" ? new MockQuotaProvider(clock) : new AppServerQuotaProvider(config.codex, clock);
   const monitor = new QuotaMonitor(provider);
   return {
     status: () => monitor.sample(),

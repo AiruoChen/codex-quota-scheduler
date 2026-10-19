@@ -18,6 +18,13 @@ export interface QuotaSnapshot {
   source: "mock" | "codex";
   fetchedAt: string;
   buckets: QuotaBucket[];
+  account?: {
+    type: "chatgpt";
+    email: string | null;
+    planType: string | null;
+    workspaceId: string | null;
+  };
+  cli?: { version: string };
 }
 
 export interface QuotaProvider {

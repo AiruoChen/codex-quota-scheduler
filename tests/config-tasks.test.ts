@@ -19,9 +19,9 @@ test("示例配置可运行模拟预览且明确标注来源", async () => {
   assert.ok(isAbsolute(tasks[0]!.promptFile));
 });
 
-test("真实 provider 尚未实现时明确报错，不回退为模拟额度", async () => {
+test("真实 provider 找不到 CLI 时明确报错，不回退为模拟额度", async () => {
   const config = await loadConfig("config/example.json");
-  await assert.rejects(createApp({ ...config, provider: "codex" }).status(), { code: "NOT_IMPLEMENTED" });
+  await assert.rejects(createApp({ ...config, provider: "codex", codex: { ...config.codex, executable: join(tmpdir(), "missing-codex-cli-for-tests") } }).status(), { code: "CODEX_NOT_FOUND" });
 });
 
 test("配置和任务路径相对文件解析；非法版本和重复 ID 被拒绝", async () => {

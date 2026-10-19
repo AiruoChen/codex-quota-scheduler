@@ -1,4 +1,4 @@
-import type { TaskDefinition, TaskRun } from "./task.js";
+import type { RunUpdate, StoredTask, TaskDefinition, TaskRevision, TaskRun, TaskStatus } from "./task.js";
 
 export interface Clock {
   now(): Date;
@@ -7,13 +7,18 @@ export interface Clock {
 export const systemClock: Clock = { now: () => new Date() };
 
 export interface TaskRepository {
-  list(): Promise<TaskDefinition[]>;
-  save(task: TaskDefinition): Promise<void>;
-  remove(id: string): Promise<void>;
+  list(): Promise<StoredTask[]>;
+  get(id: string): Promise<StoredTask | null>;
+  create(task: TaskDefinition, prompt: string): Promise<StoredTask>;
+  update(task: TaskDefinition, prompt: string, expectedRevision: number): Promise<StoredTask>;
+  remove(id: string, expectedRevision: number): Promise<void>;
+  revisions(id: string): Promise<TaskRevision[]>;
 }
 
 export interface RunRepository {
-  save(run: TaskRun): Promise<void>;
+  create(taskId: string): Promise<TaskRun>;
+  get(id: string): Promise<TaskRun | null>;
+  update(id: string, update: RunUpdate, expectedStatus: TaskStatus): Promise<TaskRun>;
   listByTask(taskId: string): Promise<TaskRun[]>;
 }
 

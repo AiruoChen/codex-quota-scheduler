@@ -5,5 +5,6 @@
   "quotaMaxAgeMs": 120000,
   "reservePercent": 10,
   "limitId": "codex",
-  "tasksFile": "../examples/tasks.json"
+  "tasksFile": "../examples/tasks.json",
+  "storage": { "databasePath": "../.runtime/state.sqlite" }
 }

@@ -9,7 +9,8 @@ import { loadTasks } from "../src/tasks/load.js";
 
 test("示例配置可运行模拟预览且明确标注来源", async () => {
   const config = await loadConfig("config/example.json");
-  const app = createApp(config, { now: () => new Date("2026-10-19T00:00:00Z") });
+  const app = createApp({ ...config, storage: { databasePath: ":memory:" } }, { now: () => new Date("2026-10-19T00:00:00Z") });
+  try {
   const preview = await app.preview();
   assert.equal(preview.mode, "preview_only");
   assert.equal(preview.snapshot.source, "mock");
@@ -17,6 +18,7 @@ test("示例配置可运行模拟预览且明确标注来源", async () => {
   const tasks = await app.tasks();
   assert.ok(isAbsolute(tasks[0]!.projectDir));
   assert.ok(isAbsolute(tasks[0]!.promptFile));
+  } finally { await app.close(); }
 });
 
 test("真实 provider 找不到 CLI 时明确报错，不回退为模拟额度", async () => {

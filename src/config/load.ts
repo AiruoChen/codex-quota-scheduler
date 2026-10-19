@@ -13,6 +13,7 @@ export interface AppConfig {
   limitId: string;
   tasksFile: string;
   codex: CodexOptions;
+  storage: { databasePath: string };
 }
 
 function loadCodexOptions(value: unknown, base: string): CodexOptions {
@@ -37,11 +38,18 @@ function loadCodexOptions(value: unknown, base: string): CodexOptions {
 
 export async function loadConfig(path: string): Promise<AppConfig> {
   const configPath = resolve(path);
-  const data = requireRecord(JSON.parse(await readFile(configPath, "utf8")), "配置");
+  return parseConfig(JSON.parse(await readFile(configPath, "utf8")), configPath);
+}
+
+export function parseConfig(input: unknown, path: string): AppConfig {
+  const configPath = resolve(path);
+  const data = requireRecord(input, "配置");
   if (data.schemaVersion !== 1) throw new AppError("CONFIG_VERSION", "仅支持 schemaVersion=1");
   if (data.provider !== "mock" && data.provider !== "codex") {
     throw new AppError("INVALID_CONFIG", "provider 必须是 mock 或 codex");
   }
+  const storage = data.storage === undefined ? {} : requireRecord(data.storage, "storage");
+  const databasePath = storage.databasePath === undefined ? "../.runtime/state.sqlite" : requireString(storage.databasePath, "storage.databasePath");
   return {
     schemaVersion: 1,
     provider: data.provider,
@@ -51,5 +59,6 @@ export async function loadConfig(path: string): Promise<AppConfig> {
     limitId: requireString(data.limitId, "limitId"),
     tasksFile: resolve(dirname(configPath), requireString(data.tasksFile, "tasksFile")),
     codex: loadCodexOptions(data.codex, dirname(configPath)),
+    storage: { databasePath: databasePath === ":memory:" ? databasePath : resolve(dirname(configPath), databasePath) },
   };
 }

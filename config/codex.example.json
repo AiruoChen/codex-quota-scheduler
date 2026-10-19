@@ -6,6 +6,7 @@
   "reservePercent": 10,
   "limitId": "codex",
   "tasksFile": "../examples/tasks.json",
+  "storage": { "databasePath": "../.runtime/state.sqlite" },
   "codex": {
     "executable": "codex",
     "args": [],

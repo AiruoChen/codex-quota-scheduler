@@ -11,6 +11,7 @@
 flowchart LR
   CLI[命令行] --> App[应用组合层]
   App --> Config[配置与任务文件]
+  App --> Store[SQLite 任务与运行记录]
   App --> Monitor[单次额度采样]
   Monitor --> Provider[QuotaProvider]
   Provider --> Mock[模拟适配器]
@@ -41,7 +42,7 @@ account/read（refreshToken=false）、account/rateLimits/read。成功或失败
 - `QuotaSnapshot`：保留来源、采集时间和多个额度桶；窗口按实际分钟数识别。
 - `TaskDefinition`：保存指令位置、项目、优先级和会话意图。
 - `TaskExecutor.execute()`：接收指令快照与取消信号，返回 `TaskRun`。
-- `TaskRepository` / `RunRepository`：分别管理任务定义和运行历史。
+- `TaskRepository` / `RunRepository`：分别管理版本化任务定义、不可变快照和运行状态。
 - `Clock`：业务逻辑可使用固定时间测试，避免依赖真实等待。
 - `Notifier`：预留本地通知实现。
 
@@ -62,6 +63,20 @@ account/read（refreshToken=false）、account/rateLimits/read。成功或失败
 
 ## 持久化与界面
 
-当前内存仓储用于开发，会随进程退出丢失；示例 JSON 是可手动维护的任务定义。
-第二阶段先确定数据模型、迁移和事务要求，再引入 SQLite 等持久化实现。
+SQLite 使用 Node 内置 node:sqlite，无第三方运行时依赖；npm 脚本为 Node 22.12 设置必要的实验参数。
+Database 统一管理事务、迁移、完整性检查与 VACUUM INTO 备份；任务和运行记录分别由仓储封装。
+数据库以 application_id 标识，拒绝打开已知的其他应用数据库。schema 版本使用 PRAGMA user_version，
+当前版本 2；升级事务内重读版本，迁移失败回滚，不自动重置数据。
+
+tasks 保存当前定义与指令，task_versions 保存每次编辑的定义和指令快照；runs 保存准备运行时的版本、
+完整定义、指令、SHA-256 和运行状态。修改或归档任务不改变旧运行记录。归档的 ID 保留，不允许被新任务复用。
+任务编辑通过预期 revision 防止丢失更新，批量导入与版本写入使用同一事务。
+首次导入标记随数据一起持久化，防止重启时恢复已归档任务。
+
+配置仍使用独立 JSON 文件。ConfigManager 在写锁内校验、保存上一个有效版本到 .bak，
+再将同目录临时文件 fsync 后原子替换。读取不要求写锁；写冲突明确返回 CONFIG_BUSY。
+配置与数据库是两个独立持久化单元，不提供跨文件事务。路径在配置/任务文件位置解析，数据库中保留绝对路径。
+
+应用只在需要任务数据时打开数据库，status 不依赖 SQLite 连接；CLI finally 关闭连接。
+demo 强制使用模拟额度与内存数据库；任务管理命令不触发真实额度查询或任务执行。
 后台服务、管理界面、托盘与通知放在后续阶段，复用同一应用层。

@@ -10,6 +10,9 @@ coverage/
 !.env.example
 auth.json
 .codex/
-config/local.json
+config/local.json*
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
 .DS_Store
 Thumbs.db

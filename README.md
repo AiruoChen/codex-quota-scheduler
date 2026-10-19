@@ -3,7 +3,7 @@
 本地运行的 Codex 额度监控与任务调度项目，面向 Windows，采用 TypeScript + Node.js。
 目标：提前维护任务，在账户额度恢复且其他限制允许时，自动提交给 Codex。
 
-**当前版本已完成真实 Codex 额度读取。默认演示仍使用模拟数据；任务发送、持续监控和重启恢复尚未实现。**
+**当前已完成真实额度读取、任务与配置持久化管理。默认演示使用模拟数据和内存存储；任务发送、持续监控和执行中的崩溃恢复尚未实现。**
 
 ## 快速开始
 
@@ -20,6 +20,21 @@ Windows PowerShell 若限制执行 npm.ps1，请使用上面的 npm.cmd；其他
 
 演示会输出 `source: "mock"`、`mode: "preview_only"` 和下一项任务的候选决策。
 `action: "run"` 仅表示满足当前预览条件，不代表已发送指令。
+`demo` 不修改个人数据库。Node.js 22.12 的 SQLite 实验参数已包含在 npm 启动和测试脚本中，
+该版本可能输出 SQLite ExperimentalWarning，不影响 JSON 结果。
+
+## 初始化本地管理数据
+
+```powershell
+npm.cmd run build
+npm.cmd start -- config init
+npm.cmd start -- storage init
+npm.cmd start -- task list
+```
+
+默认创建被 Git 忽略的 `config/local.json`，数据库为 `.runtime/state.sqlite`。
+首次任务访问会从 `tasksFile` 导入任务并保存提示词快照，之后以数据库为准；编辑源 JSON 不会自动覆盖已有任务。
+任务编辑、版本检查、历史、备份和恢复见 [持久化管理说明](docs/PERSISTENCE.md)。
 
 ## 命令
 
@@ -29,12 +44,17 @@ Windows PowerShell 若限制执行 npm.ps1，请使用上面的 npm.cmd；其他
 npm.cmd start -- help
 npm.cmd start -- status
 npm.cmd start -- tasks
+npm.cmd start -- task list
+npm.cmd start -- task history review-project
+npm.cmd start -- runs list review-project
+npm.cmd start -- config show
 npm.cmd start -- preview
 npm.cmd start -- status --config config/codex.example.json
 npm.cmd start -- status --config config/local.json
 ```
 
-默认加载 `config/example.json`。可以复制为被 Git 忽略的 `config/local.json` 后编辑。
+默认优先加载 `config/local.json`，不存在时加载 `config/example.json`；可通过 `--config` 指定。
+`demo` 默认使用示例配置并强制使用 mock 和内存库，确保演示可重复。
 `provider: "mock"` 使用模拟数据；`provider: "codex"` 通过本机 Codex App Server 查询真实账户。
 
 ## 真实额度读取
@@ -63,13 +83,14 @@ npm.cmd start -- status --config config/codex.example.json
 | `reservePercent` | 任一相关窗口剩余额度达到该阈值时，等待 |
 | `limitId` | 当前任务使用的额度桶，默认 `codex` |
 | `tasksFile` | 相对于配置文件位置的任务 JSON 路径 |
+| `storage.databasePath` | 相对于配置文件位置的 SQLite 路径，默认 `../.runtime/state.sqlite` |
 | `codex.executable` | Codex 命令名或可执行文件路径，默认 `codex` |
 | `codex.args` | 可选启动器前置参数数组，默认 `[]` |
 | `codex.home` | 可选 Codex 数据目录，仅设置在子进程环境中；默认继承现有配置 |
 | `codex.requestTimeoutMs` | 版本检查和每个 RPC 的超时，默认 15000 毫秒 |
 | `codex.shutdownTimeoutMs` | 关闭进程各阶段的等待时间，默认 1000 毫秒 |
 
-任务示例位于 `examples/tasks.json`，提示词位于 `examples/prompts/`。
+批量导入示例位于 `examples/tasks.json`，提示词位于 `examples/prompts/`。
 任务中的 `projectDir`、`promptFile` 相对于任务 JSON 文件位置解析。
 `priority` 越大越优先，`enabled` 控制是否进入候选队列。模型可选，当前不硬编码模型名称。
 `session` 支持描述新会话或指定 `threadId` 的续接意图；真实执行待开发。
@@ -82,12 +103,12 @@ src/
   domain/          额度、任务、执行记录及接口
   adapters/codex/  CLI 发现、stdio RPC、真实额度读取与响应归一化
   adapters/mock/   模拟额度适配器
-  config/          配置加载和校验
-  tasks/           任务文件加载和校验
+  config/          配置加载、校验、原子保存和恢复
+  tasks/           任务文件解析、导入和版本编辑服务
   monitor/         单次采样入口，预留持续监控
   scheduler/       纯函数调度条件判断
   executor/        真实执行器占位
-  storage/         内存任务仓储，预留持久化
+  storage/         SQLite、版本迁移、任务/运行仓储和备份
   shared/          错误与校验工具
   app.ts           组合各模块
   cli.ts           命令行入口
@@ -100,10 +121,10 @@ docs/              需求、架构和分阶段开发路线
 
 ## 开发顺序
 
-下一块是 **任务与配置持久化管理**，具体任务与验收见 [开发路线](docs/ROADMAP.md)。
+下一块是 **手动任务执行**，具体任务与验收见 [开发路线](docs/ROADMAP.md)。
 整体职责与数据流见 [架构说明](docs/ARCHITECTURE.md)，产品边界见 [需求清单](docs/REQUIREMENTS.md)。
 
-自动调度上线前必须完成持久化、重复提交防护、超时及崩溃恢复；目前的纯函数预览不承担这些职责。
+目前已持久化任务定义、指令版本和运行状态。自动调度上线前仍需实现执行权管理、重复提交防护及执行中的崩溃恢复。
 
 ## 接口依据
 

@@ -9,8 +9,8 @@
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node scripts/test.mjs",
-    "start": "node dist/src/cli.js",
-    "demo": "npm run build && node dist/src/cli.js demo"
+    "start": "node --experimental-sqlite dist/src/cli.js",
+    "demo": "npm run build && node --experimental-sqlite dist/src/cli.js demo"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",

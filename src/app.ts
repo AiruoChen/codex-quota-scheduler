@@ -7,6 +7,12 @@ import { evaluateQueue } from "./scheduler/evaluate.js";
 import { TaskService } from "./tasks/service.js";
 import type { SqliteStore } from "./storage/sqlite-store.js";
 import { ManualExecutionService } from "./executor/manual-service.js";
+import { AppServerQuotaFeed } from "./adapters/codex/quota-feed.js";
+import { ContinuousQuotaMonitor } from "./monitor/continuous-monitor.js";
+import { SqliteMonitorRepository } from "./storage/monitor-repository.js";
+import { digest } from "./monitor/recognize.js";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 export function createApp(config: AppConfig, clock: Clock = systemClock) {
   const provider = config.provider === "mock" ? new MockQuotaProvider(clock) : new AppServerQuotaProvider(config.codex, clock);
@@ -14,6 +20,7 @@ export function createApp(config: AppConfig, clock: Clock = systemClock) {
   let store: SqliteStore | undefined;
   let opening: Promise<SqliteStore> | undefined;
   let closed = false;
+  let continuous: ContinuousQuotaMonitor | undefined;
   async function storage(): Promise<SqliteStore> {
     if (closed) throw new Error("Application is closed");
     opening ??= (async () => {
@@ -33,9 +40,19 @@ export function createApp(config: AppConfig, clock: Clock = systemClock) {
     status: () => monitor.sample(),
     storage,
     taskService,
+    async monitoring() {
+      const current = await storage();
+      if (!continuous) {
+        const streamKey = digest([config.provider, config.limitId, config.reservePercent, config.quotaMaxAgeMs,
+          config.provider === "codex" ? [config.codex.executable, config.codex.args, config.codex.home ?? process.env.CODEX_HOME ?? join(homedir(), ".codex")] : null]);
+        continuous = new ContinuousQuotaMonitor(config.provider === "codex" ? new AppServerQuotaFeed(config.codex, clock) : provider,
+          new SqliteMonitorRepository(current.database, streamKey, config, clock), clock);
+      }
+      return continuous;
+    },
     async execution() { return new ManualExecutionService(config, await storage(), clock); },
     async tasks() { await taskService(); return (await storage()).tasks.list(); },
-    async close() { closed = true; await opening?.catch(() => {}); store?.close(); },
+    async close() { closed = true; try { await continuous?.close(); } finally { await opening?.catch(() => {}); store?.close(); } },
     async preview() {
       await taskService();
       const [snapshot, tasks] = await Promise.all([monitor.sample(), (await storage()).tasks.list()]);

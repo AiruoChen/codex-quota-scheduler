@@ -29,6 +29,14 @@ export const migrations = [
      created_at TEXT NOT NULL, type TEXT NOT NULL, data_json TEXT NOT NULL
    ) STRICT;
    CREATE INDEX events_by_run ON execution_events(run_id, sequence);`,
+  `CREATE TABLE quota_monitor_state (stream_key TEXT PRIMARY KEY, data_json TEXT NOT NULL) STRICT;
+   CREATE TABLE quota_monitor_events (
+     sequence INTEGER PRIMARY KEY AUTOINCREMENT, stream_key TEXT NOT NULL,
+     event_key TEXT, created_at TEXT NOT NULL, type TEXT NOT NULL, data_json TEXT NOT NULL,
+     UNIQUE(stream_key, event_key)
+   ) STRICT;
+   CREATE INDEX quota_events_by_stream ON quota_monitor_events(stream_key, sequence);
+   CREATE TABLE quota_monitor_reset_keys (stream_key TEXT NOT NULL, event_key TEXT NOT NULL, PRIMARY KEY(stream_key, event_key)) STRICT;`,
 ];
 
 export class Database {

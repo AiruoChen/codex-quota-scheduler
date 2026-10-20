@@ -6,10 +6,10 @@ import { connectCodex, readQuota } from "./session.js";
 export class AppServerQuotaProvider implements QuotaProvider {
   constructor(private readonly options: CodexOptions = defaultCodexOptions, private readonly clock: Clock = systemClock) {}
 
-  async read(): Promise<QuotaSnapshot> {
-    const { client, launch } = await connectCodex(this.options);
+  async read(signal?: AbortSignal): Promise<QuotaSnapshot> {
+    const { client, launch } = await connectCodex(this.options, signal);
     try {
-      return await readQuota(client, this.clock, launch.version);
+      return await readQuota(client, this.clock, launch.version, signal);
     } finally {
       await client.close();
     }

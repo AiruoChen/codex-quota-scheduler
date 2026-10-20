@@ -3,7 +3,7 @@
 本地运行的 Codex 额度监控与任务调度项目，面向 Windows，采用 TypeScript + Node.js。
 目标：提前维护任务，在账户额度恢复且其他限制允许时，自动提交给 Codex。
 
-**当前已完成真实额度读取、持久化管理及手动任务执行。默认演示使用模拟数据和内存存储；持续监控与自动调度尚未实现。**
+**当前已完成真实额度读取、持久化管理、手动执行及持续额度监控。默认演示使用模拟数据和内存存储；自动调度尚未实现。**
 
 ## 快速开始
 
@@ -52,6 +52,19 @@ npm.cmd start -- runs list review-project
 已有 queued 记录可使用 `runs start 运行ID` 启动；`runs events 运行ID` 查看事件。
 具体权限、超时、续接和异常处理见 [手动执行说明](docs/EXECUTION.md)。
 
+## 持续额度监控
+
+```powershell
+npm.cmd start -- config set provider codex
+npm.cmd start -- monitor watch
+```
+
+监控会轮询真实额度并处理更新通知，输出每次采样的 JSONL；Ctrl+C 停止。
+`monitor status` 查看本地最新状态，`monitor events` 查看刷新、可用性和连接错误事件，均不访问网络。
+`monitor sample` 查询一次并持久化；`monitor watch --samples 2` 可做有限采样。
+重复快照不会重复生成刷新事件，重启后继续使用本地检查点；五小时窗口刷新也不能绕过周额度或保留阈值。
+这些命令只监控，不提交任务。识别规则和错误处理见 [额度监控说明](docs/MONITORING.md)。
+
 ## 命令
 
 先运行 `npm.cmd run build`，然后使用：
@@ -94,8 +107,8 @@ npm.cmd start -- status --config config/codex.example.json
 | 配置 | 作用 |
 | --- | --- |
 | `provider` | `mock` 模拟数据；`codex` 真实账户查询 |
-| `pollIntervalMs` | 为持续监控预留的采样间隔，当前单次查询不使用它 |
-| `quotaMaxAgeMs` | 调度预览允许的最大数据年龄 |
+| `pollIntervalMs` | 持续监控的常规采样间隔，通知及预计重置边界可提前触发查询 |
+| `quotaMaxAgeMs` | 监控状态、调度预览和执行检查允许的最大数据年龄 |
 | `reservePercent` | 任一相关窗口剩余额度达到该阈值时，等待 |
 | `limitId` | 当前任务使用的额度桶，默认 `codex` |
 | `tasksFile` | 相对于配置文件位置的任务 JSON 路径 |
@@ -122,7 +135,7 @@ src/
   adapters/mock/   模拟额度适配器
   config/          配置加载、校验、原子保存和恢复
   tasks/           任务文件解析、导入和版本编辑服务
-  monitor/         单次采样入口，预留持续监控
+  monitor/         轮询、通知唤醒、退避与纯函数刷新识别
   scheduler/       纯函数调度条件判断
   executor/        手动执行服务、Codex 接入与回合事件处理
   storage/         SQLite、版本迁移、任务/运行仓储和备份
@@ -138,11 +151,11 @@ docs/              需求、架构和分阶段开发路线
 
 ## 开发顺序
 
-下一块是 **持续额度监控**，具体任务与验收见 [开发路线](docs/ROADMAP.md)。
+下一块是 **自动调度**，具体任务与验收见 [开发路线](docs/ROADMAP.md)。
 整体职责与数据流见 [架构说明](docs/ARCHITECTURE.md)，产品边界见 [需求清单](docs/REQUIREMENTS.md)。
 
 当前手动执行已串行化并防止重复启动同一记录；遗留执行权需人工核对。
-自动调度上线前仍需完成刷新事件、队列策略及更完整的运行恢复。
+监控已提供持久化刷新事件；自动调度仍需连接队列策略、事件消费及更完整的运行恢复。
 
 ## 接口依据
 
@@ -150,7 +163,7 @@ docs/              需求、架构和分阶段开发路线
 `account/rateLimits/read` 和额度更新通知。窗口时长、已用比例和重置时间必须以返回数据为准。
 官方 [非交互模式](https://learn.chatgpt.com/docs/non-interactive-mode) 可作为后续执行器的接入依据。
 
-文档核对日期：2026-10-19。真实接入时需再次核对本机 Codex 版本与对应协议。
+文档核对日期：2026-10-20。真实接入时需再次核对本机 Codex 版本与对应协议。
 
 ## 仓库
 

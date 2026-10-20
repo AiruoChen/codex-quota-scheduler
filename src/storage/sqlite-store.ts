@@ -6,6 +6,7 @@ import { readStoredTask, SqliteTaskRepository } from "./task-repository.js";
 import { ExecutionRepository } from "./execution-repository.js";
 import { AppError } from "../shared/errors.js";
 import { isRecord } from "../shared/validation.js";
+import { readMonitorEvent, readMonitorState } from "./monitor-repository.js";
 
 export interface TaskImport { task: TaskDefinition; prompt: string }
 
@@ -46,6 +47,8 @@ export class SqliteStore {
         if (!isRecord(JSON.parse(String(row.data_json))) || !Number.isFinite(Date.parse(String(row.created_at)))) throw new Error("Invalid event");
       } catch { throw new AppError("STORAGE_INVALID", "执行事件格式异常，请检查备份。"); }
     }
+    for (const row of this.database.connection.prepare("SELECT data_json FROM quota_monitor_state").all()) readMonitorState(String(row.data_json));
+    for (const row of this.database.connection.prepare("SELECT * FROM quota_monitor_events").all()) readMonitorEvent(row);
     return { ok: true, tasks: tasks.length, runs: runs.length, versions };
   }
 

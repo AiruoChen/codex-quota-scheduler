@@ -14,6 +14,7 @@ const help = `用法：npm start -- 命令 [--config 文件路径]
   task history ID | run ID
   runs prepare 任务ID | list 任务ID | show 运行ID
   runs start 运行ID | cancel 运行ID | events 运行ID | recover 运行ID
+  monitor sample | watch [--samples 次数] | status | events
   storage init | check | backup 新备份文件
 默认优先 config/local.json，否则 config/example.json。demo 使用模拟数据和内存数据库。
 runs prepare 只保存 queued 记录和指令快照，不提交任务。`;
@@ -35,6 +36,7 @@ async function main(): Promise<unknown> {
   const args = process.argv.slice(2);
   const explicitConfig = takeOption(args, "--config");
   const revisionText = takeOption(args, "--revision");
+  const samplesText = takeOption(args, "--samples");
   const command = args.shift() ?? "help";
   if (["help", "--help", "-h"].includes(command)) { console.log(help); return; }
   const configPath = explicitConfig ?? (command === "demo" || !existsSync("config/local.json") ? "config/example.json" : "config/local.json");
@@ -43,7 +45,10 @@ async function main(): Promise<unknown> {
   const needsRevision = command === "task" && ["update", "enable", "disable", "delete"].includes(action ?? "");
   const revision = revisionText === undefined ? undefined : Number(revisionText);
   if (needsRevision ? !Number.isSafeInteger(revision) || revision! < 1 : revision !== undefined) invalid();
-  if (!["status", "tasks", "preview", "demo", "config", "task", "runs", "storage"].includes(command)) invalid();
+  if (!["status", "tasks", "preview", "demo", "config", "task", "runs", "storage", "monitor"].includes(command)) invalid();
+  const samples = samplesText === undefined ? Infinity : Number(samplesText);
+  if (samplesText !== undefined && (command !== "monitor" || action !== "watch" || !Number.isSafeInteger(samples) || samples < 1)) invalid();
+  if (command === "monitor" && (!["sample", "watch", "status", "events"].includes(action ?? "") || args.length !== 1)) invalid();
   if (command === "task" && !(action === "list" && args.length === 1
     || ["show", "add", "import", "update", "enable", "disable", "delete", "history", "run"].includes(action ?? "") && args.length === 2)) invalid();
   if (command === "runs" && (!["prepare", "list", "show", "start", "cancel", "events", "recover"].includes(action ?? "") || args.length !== 2)) invalid();
@@ -80,6 +85,23 @@ async function main(): Promise<unknown> {
     } finally { process.removeListener("SIGINT", stop); process.removeListener("SIGTERM", stop); }
   }
   try {
+    if (command === "monitor") {
+      const monitor = await app.monitoring();
+      if (action === "status") return monitor.repository.status();
+      if (action === "events") return monitor.repository.events();
+      const controller = new AbortController();
+      const stop = () => controller.abort();
+      process.once("SIGINT", stop); process.once("SIGTERM", stop);
+      try {
+        if (action === "sample") {
+          const update = await monitor.sample(controller.signal);
+          if (update.state.errorCode) process.exitCode = 1;
+          return update;
+        }
+        await monitor.run(controller.signal, (update) => { console.log(JSON.stringify(update)); }, samples);
+        return;
+      } finally { process.removeListener("SIGINT", stop); process.removeListener("SIGTERM", stop); }
+    }
     if (args.length === 0) {
       if (command === "status") return await app.status();
       if (command === "tasks") return await app.tasks();

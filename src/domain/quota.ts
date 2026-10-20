@@ -28,5 +28,11 @@ export interface QuotaSnapshot {
 }
 
 export interface QuotaProvider {
-  read(): Promise<QuotaSnapshot>;
+  read(signal?: AbortSignal): Promise<QuotaSnapshot>;
+}
+
+/** Notifications invalidate cached data; their partial payloads are never authoritative. */
+export interface QuotaFeed extends QuotaProvider {
+  subscribe(listener: () => void): () => void;
+  close(): Promise<void>;
 }

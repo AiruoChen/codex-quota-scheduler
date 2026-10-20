@@ -19,6 +19,10 @@ flowchart LR
   App --> Policy[调度条件判断]
   Policy --> Preview[JSON 预览结果]
   App --> Manual[手动执行服务]
+  App --> Watch[持续额度监控]
+  Watch --> Feed[连接复用与通知提示]
+  Watch --> Recognize[纯函数刷新识别]
+  Recognize --> Store
   Manual --> Store
   Manual --> Turn[Codex 回合与中断]
 ```
@@ -36,8 +40,8 @@ account/read（refreshToken=false）、account/rateLimits/read。成功或失败
 缺少登录、非 ChatGPT 登录、未知协议和网络错误分别返回稳定错误码，绝不回退为模拟数据。
 工作区 ID 只采信接口实际返回的信息，不从邮箱或套餐推断。
 
-采集时间在收到额度响应后生成。每次查询重新读取账户，避免缓存旧账户状态；以后持续监控可复用底层连接，
-但需要另行实现更新通知、账户变化、取消与退避逻辑。
+采集时间在收到额度响应后生成。status 保持独立短连接；持续监控使用 AppServerQuotaFeed 复用连接，
+每次完整查询前后读取账户并比较；更新通知是重读提示，不直接替换快照。重复套餐通知不等于身份变化。
 
 ## 稳定接口
 
@@ -69,7 +73,7 @@ account/read（refreshToken=false）、account/rateLimits/read。成功或失败
 SQLite 使用 Node 内置 node:sqlite，无第三方运行时依赖；npm 脚本为 Node 22.12 设置必要的实验参数。
 Database 统一管理事务、迁移、完整性检查与 VACUUM INTO 备份；任务和运行记录分别由仓储封装。
 数据库以 application_id 标识，拒绝打开已知的其他应用数据库。schema 版本使用 PRAGMA user_version，
-当前版本 3；升级事务内重读版本，迁移失败回滚，不自动重置数据。
+当前版本 4；升级事务内重读版本，迁移失败回滚，不自动重置数据。
 
 tasks 保存当前定义与指令，task_versions 保存每次编辑的定义和指令快照；runs 保存准备运行时的版本、
 完整定义、指令、SHA-256 和运行状态。修改或归档任务不改变旧运行记录。归档的 ID 保留，不允许被新任务复用。
@@ -99,4 +103,16 @@ agentMessage 完成项为最终文本依据，turn/completed 才能确定回合�
 execution_events 只记录所需的生命周期元数据，不保存原始审批参数、原始错误和推理内容。
 运行最终输出保存在 runs 中；流式部分输出定期保存，任务和指令快照不变。
 
-后台服务、管理界面、托盘与通知放在后续阶段，复用同一应用层。
+## 持续监控
+
+ContinuousQuotaMonitor 负责串行采样、等待、通知合并、失败退避和取消；时钟与等待器可注入。
+recognize 是纯状态转换，分别输出窗口刷新事件和可用性变化，不依赖 CLI 或任务执行器。
+domain/quota-policy.ts 的可用性判断同时供监控、调度预览和手动执行复用。
+
+SqliteMonitorRepository 在同步事务内读取旧检查点、识别变化、插入去重标识及事件、保存新检查点。
+每个来源/连接配置/额度策略形成独立监控流；账户或套餐变化重建窗口基线。
+事件明细保留最近 1000 条；刷新去重键独立保留，清理历史不会重新发出旧事件。
+离线 status 重新检查快照年龄与窗口截止时间，历史可用不等于现在可用。
+监控的运行范围、刷新证据和保守识别边界见 MONITORING.md。
+
+后台服务、管理界面、托盘与本地通知放在后续阶段，复用同一应用层。

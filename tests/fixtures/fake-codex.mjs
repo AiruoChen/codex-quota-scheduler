@@ -22,6 +22,8 @@ if (process.argv.includes("--version")) {
   if (scenario === "stubborn") setInterval(() => {}, 1000);
   let initialized = false;
   let acknowledged = false;
+  let accountReads = 0;
+  let quotaReads = 0;
   const send = (message) => {
     const line = Buffer.from(JSON.stringify(message) + "\n");
     if (scenario === "fragmented") {
@@ -49,13 +51,15 @@ if (process.argv.includes("--version")) {
     if (message.method === "initialized") { acknowledged = initialized; return; }
     if (!initialized || !acknowledged) { send({ id: message.id, error: { code: -32000, message: "Not initialized" } }); return; }
     if (message.method === "account/read") {
+      accountReads++;
       if (scenario === "account-missing") { result({ requiresOpenaiAuth: true }); return; }
       const account = scenario === "account-null" ? null : scenario === "api-key" ? { type: "apiKey" }
-        : { type: "chatgpt", email: "用户@example.test", planType: "plus" };
+        : { type: "chatgpt", email: scenario === "monitor-account-change" && accountReads > 1 ? "other@example.test" : "用户@example.test", planType: "plus" };
       result({ account, requiresOpenaiAuth: true });
       return;
     }
     if (message.method === "account/rateLimits/read") {
+      quotaReads++;
       if (scenario.startsWith("rpc-")) {
         const errors = {
           "rpc-auth": { code: 401, message: "Unauthorized private-debug-secret-must-not-leak" },
@@ -73,10 +77,13 @@ if (process.argv.includes("--version")) {
         send({ id: 9999, result: { ignored: true } });
         send({ id: "server-request", method: "account/chatgptAuthTokens/refresh", params: {} });
       }
+      if (scenario === "monitor-account-notify") send({ method: "account/updated", params: { authMode: "chatgpt", planType: "plus" } });
       result({ rateLimitsByLimitId: { codex: {
         primary: { usedPercent: 31, windowDurationMins: scenario === "weekly-only" ? 10080 : 300, resetsAt: 1792454400 },
         secondary: null,
       } } });
+      if (quotaReads === 1 && scenario === "monitor-notify") setTimeout(() => send({ method: "account/rateLimits/updated", params: { rateLimits: { primary: { usedPercent: 0 } } } }), 50);
+      if (quotaReads === 1 && scenario === "monitor-exit") setTimeout(() => process.exit(7), 50);
       return;
     }
     send({ id: message.id, error: { code: -32601, message: "Unknown method" } });

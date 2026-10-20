@@ -125,7 +125,8 @@ npm.cmd start -- task list
 - tasks/service.ts：文件导入、指令读取及任务编辑。
 - config/manage.ts：配置写锁、有效备份与原子保存。
 
-当前数据库 schema=3，新增执行权和执行事件表。升级按顺序在事务中执行；较新的 schema 会被拒绝，不能使用旧程序覆盖它。
+当前数据库 schema=4，新增额度监控检查点、事件和刷新去重表；schema=3 的执行权和事件保持兼容。
+升级按顺序在事务中执行；较新的 schema 会被拒绝，不能使用旧程序覆盖它。
 SQLite、个人配置、备份及真实任务均应保存在 .runtime/ 或 .local/，不提交到 GitHub。
 prepared 记录可以通过 runs start 显式启动；当前没有自动取任务机制。
 

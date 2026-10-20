@@ -1,6 +1,6 @@
 import type { QuotaProvider, QuotaSnapshot } from "../domain/quota.js";
 
-/** One sample at a time. Polling, cancellation and reset events are phase 4. */
+/** Read-only one-shot access, separate from the persistent monitoring stream. */
 export class QuotaMonitor {
   constructor(private readonly provider: QuotaProvider) {}
 

@@ -8,15 +8,16 @@ export class ExecutionRepository {
   constructor(private readonly db: Database, private readonly clock: Clock) {}
 
   claim(id: string): TaskRun {
-    return this.db.transaction(() => this.claimInside(this.get(id)));
+    return this.db.transaction(() => this.claimInside(id));
   }
 
   claimNew(taskId: string): TaskRun {
-    return this.db.transaction(() => this.claimInside(new SqliteRunRepository(this.db, this.clock).insert(taskId)));
+    return this.db.transaction(() => this.claimInside(new SqliteRunRepository(this.db, this.clock).insert(taskId).id));
   }
 
-  private claimInside(run: TaskRun): TaskRun {
-    const id = run.id;
+  /** Only call inside a synchronous database transaction. */
+  claimInside(id: string): TaskRun {
+    const run = this.get(id);
     if (!["queued", "waiting_quota"].includes(run.status)) throw new AppError("RUN_ALREADY_STARTED", "此记录已启动或已结束，不能重复提交。");
     const task = this.db.connection.prepare("SELECT definition_json FROM tasks WHERE id=? AND deleted_at IS NULL").get(run.taskId);
     if (!task || (JSON.parse(String(task.definition_json)) as { enabled: boolean }).enabled !== true) throw new AppError("TASK_DISABLED", "任务不存在、已归档或已停用。");
@@ -44,6 +45,18 @@ export class ExecutionRepository {
 
   cancelled(id: string): boolean {
     return this.db.connection.prepare("SELECT cancel_requested FROM execution_lock WHERE run_id=?").get(id)?.cancel_requested === 1;
+  }
+
+  takeClaim(id: string): TaskRun {
+    return this.db.transaction(() => {
+      const lock = this.db.connection.prepare("SELECT owner_pid,dispatch_started FROM execution_lock WHERE run_id=?").get(id);
+      if (!lock || lock.owner_pid !== process.pid || lock.dispatch_started !== 0) throw new AppError("RUN_ALREADY_STARTED", "此执行权不属于当前进程或已经用于执行。");
+      const run = this.get(id);
+      if (run.status !== "running") throw new AppError("RUN_CONFLICT", "执行权对应记录不在 running 状态。");
+      if (run.turnId || this.db.connection.prepare("SELECT sequence FROM execution_events WHERE run_id=? AND type='submission_started'").get(id)) throw new AppError("RUN_ALREADY_STARTED", "此记录已有提交证据，请先核对会话，不能重新发送。");
+      this.db.connection.prepare("UPDATE execution_lock SET dispatch_started=1 WHERE run_id=?").run(id);
+      return run;
+    });
   }
 
   release(id: string): void { this.db.connection.prepare("DELETE FROM execution_lock WHERE run_id=? AND owner_pid=?").run(id, process.pid); }

@@ -23,6 +23,11 @@ flowchart LR
   Watch --> Feed[连接复用与通知提示]
   Watch --> Recognize[纯函数刷新识别]
   Recognize --> Store
+  App --> Scheduler[自动调度服务]
+  Scheduler --> Watch
+  Scheduler --> Queue[原子队列领取与刷新消费]
+  Queue --> Store
+  Scheduler --> Manual
   Manual --> Store
   Manual --> Turn[Codex 回合与中断]
 ```
@@ -57,7 +62,7 @@ account/read（refreshToken=false）、account/rateLimits/read。成功或失败
 `null` 表示未知，不能转换成零消耗或额度已刷新。没有返回五小时窗口时不补造窗口。
 各额度桶不合并，当前只检查配置指定的桶及其所有返回窗口。
 
-## 后续执行流程
+## 自动执行流程
 
 1. 获取新鲜额度并核对当前账户、工作区及限制桶。
 2. 从持久化队列选取候选任务，确认当前没有运行中的冲突任务。
@@ -73,7 +78,7 @@ account/read（refreshToken=false）、account/rateLimits/read。成功或失败
 SQLite 使用 Node 内置 node:sqlite，无第三方运行时依赖；npm 脚本为 Node 22.12 设置必要的实验参数。
 Database 统一管理事务、迁移、完整性检查与 VACUUM INTO 备份；任务和运行记录分别由仓储封装。
 数据库以 application_id 标识，拒绝打开已知的其他应用数据库。schema 版本使用 PRAGMA user_version，
-当前版本 4；升级事务内重读版本，迁移失败回滚，不自动重置数据。
+当前版本 5；升级事务内重读版本，迁移失败回滚，不自动重置数据。
 
 tasks 保存当前定义与指令，task_versions 保存每次编辑的定义和指令快照；runs 保存准备运行时的版本、
 完整定义、指令、SHA-256 和运行状态。修改或归档任务不改变旧运行记录。归档的 ID 保留，不允许被新任务复用。
@@ -114,5 +119,21 @@ SqliteMonitorRepository 在同步事务内读取旧检查点、识别变化、�
 事件明细保留最近 1000 条；刷新去重键独立保留，清理历史不会重新发出旧事件。
 离线 status 重新检查快照年龄与窗口截止时间，历史可用不等于现在可用。
 监控的运行范围、刷新证据和保守识别边界见 MONITORING.md。
+
+## 自动调度
+
+SchedulerService 依赖 domain/scheduler.ts 中的仓储、监控及已领取执行接口，不连接外部协议或直接访问 SQLite。
+SqliteSchedulerRepository 将显式入队记录、进程权、控制状态、事件游标与刷新触发分开保存。
+同一任务版本只创建一条自动队列记录；调度器只消费这些不可变快照，按快照优先级与入队序号排序。
+
+每次监控回调在事务内重读最新检查点，确认来源、版本、新鲜度、身份和全部窗口状态，
+然后消费触发、标记运行及取得 execution_lock。与手动执行共用一份执行权。
+执行权增加 dispatch_started 一次使用标记；执行器从数据库重读已领取记录，不能用调用者传入的快照覆盖它。
+执行器再检查真实额度及账户，核对调度观察的账户后才发送指令。
+
+available 模式逐项重新采样，refresh 模式将新窗口事件合并为一份单项触发。
+刷新消费检查点按监控流与触发模式隔离，重启保留；首次启动不追溯旧事件，任务已经提交后不自动重试。
+调度进程权无超时抢占；进程死亡后人工恢复会先暂停，任务执行权另行核对。
+审批/结果不明保持 needs_attention，确认核对仅允许调度其他记录，不修改历史结果或重新提交旧任务。
 
 后台服务、管理界面、托盘与本地通知放在后续阶段，复用同一应用层。

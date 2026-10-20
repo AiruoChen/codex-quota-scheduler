@@ -3,7 +3,7 @@
 本地运行的 Codex 额度监控与任务调度项目，面向 Windows，采用 TypeScript + Node.js。
 目标：提前维护任务，在账户额度恢复且其他限制允许时，自动提交给 Codex。
 
-**当前已完成真实额度读取、持久化管理、手动执行及持续额度监控。默认演示使用模拟数据和内存存储；自动调度尚未实现。**
+**当前已完成真实额度读取、持久化管理、手动执行、持续监控及自动调度。默认演示使用模拟数据和内存存储；自动队列初始暂停，须显式入队和启动。**
 
 ## 快速开始
 
@@ -65,6 +65,23 @@ npm.cmd start -- monitor watch
 重复快照不会重复生成刷新事件，重启后继续使用本地检查点；五小时窗口刷新也不能绕过周额度或保留阈值。
 这些命令只监控，不提交任务。识别规则和错误处理见 [额度监控说明](docs/MONITORING.md)。
 
+## 自动调度
+
+在已有个人任务和真实登录的基础上：
+
+```powershell
+npm.cmd start -- config set provider codex
+npm.cmd start -- scheduler enqueue review-project
+npm.cmd start -- scheduler resume
+npm.cmd start -- scheduler start
+```
+
+默认在额度可用时按快照优先级串行执行；只运行显式入队的快照，不自动消费示例任务或 runs prepare 记录。
+同一任务版本重复入队返回原运行记录；执行完不会循环重发。
+`scheduler pause` 暂停领取下一项，`scheduler status` 查看队列和进程；Ctrl+C 停止前台调度并请求中断当前执行。
+可用 `config set scheduler.trigger refresh` 切换为确认新刷新后触发一项任务，修改配置后重启进程生效。
+审批、失败或结果不明会暂停队列；核对、恢复和触发模式详见 [自动调度说明](docs/SCHEDULING.md)。
+
 ## 命令
 
 先运行 `npm.cmd run build`，然后使用：
@@ -118,6 +135,7 @@ npm.cmd start -- status --config config/codex.example.json
 | `codex.home` | 可选 Codex 数据目录，仅设置在子进程环境中；默认继承现有配置 |
 | `codex.requestTimeoutMs` | 版本检查和每个 RPC 的超时，默认 15000 毫秒 |
 | `codex.shutdownTimeoutMs` | 关闭进程各阶段的等待时间，默认 1000 毫秒 |
+| `scheduler.trigger` | `available`：额度可用即串行执行；`refresh`：确认新刷新后触发一项任务；默认 available |
 
 批量导入示例位于 `examples/tasks.json`，提示词位于 `examples/prompts/`。
 任务中的 `projectDir`、`promptFile` 相对于任务 JSON 文件位置解析。
@@ -136,7 +154,7 @@ src/
   config/          配置加载、校验、原子保存和恢复
   tasks/           任务文件解析、导入和版本编辑服务
   monitor/         轮询、通知唤醒、退避与纯函数刷新识别
-  scheduler/       纯函数调度条件判断
+  scheduler/       纯条件判断和串行调度服务，仅依赖领域接口
   executor/        手动执行服务、Codex 接入与回合事件处理
   storage/         SQLite、版本迁移、任务/运行仓储和备份
   shared/          错误与校验工具
@@ -151,11 +169,11 @@ docs/              需求、架构和分阶段开发路线
 
 ## 开发顺序
 
-下一块是 **自动调度**，具体任务与验收见 [开发路线](docs/ROADMAP.md)。
+下一块是 **长期运行与管理界面**，具体任务与验收见 [开发路线](docs/ROADMAP.md)。
 整体职责与数据流见 [架构说明](docs/ARCHITECTURE.md)，产品边界见 [需求清单](docs/REQUIREMENTS.md)。
 
 当前手动执行已串行化并防止重复启动同一记录；遗留执行权需人工核对。
-监控已提供持久化刷新事件；自动调度仍需连接队列策略、事件消费及更完整的运行恢复。
+自动调度已接入监控和持久化队列；遗留执行权与结果不明仍需人工核对，后台服务和管理界面尚未实现。
 
 ## 接口依据
 

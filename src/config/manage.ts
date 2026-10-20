@@ -20,6 +20,7 @@ const allowed = new Set([
   "provider", "pollIntervalMs", "quotaMaxAgeMs", "reservePercent", "limitId", "tasksFile",
   "codex.executable", "codex.args", "codex.home", "codex.requestTimeoutMs", "codex.shutdownTimeoutMs",
   "storage.databasePath",
+  "scheduler.trigger",
 ]);
 
 export class ConfigManager {

@@ -1,4 +1,5 @@
 import type { ExecutionOutcome, ExecutionSink, RunUpdate, StoredTask, TaskDefinition, TaskRevision, TaskRun, TaskStatus } from "./task.js";
+import type { QuotaSnapshot } from "./quota.js";
 
 export interface Clock {
   now(): Date;
@@ -23,7 +24,7 @@ export interface RunRepository {
 }
 
 export interface TaskExecutor {
-  execute(run: TaskRun, signal: AbortSignal, sink: ExecutionSink): Promise<ExecutionOutcome>;
+  execute(run: TaskRun, signal: AbortSignal, sink: ExecutionSink, expectedAccount?: QuotaSnapshot["account"]): Promise<ExecutionOutcome>;
 }
 
 export interface Notifier {

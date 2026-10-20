@@ -37,6 +37,12 @@ export const migrations = [
    ) STRICT;
    CREATE INDEX quota_events_by_stream ON quota_monitor_events(stream_key, sequence);
    CREATE TABLE quota_monitor_reset_keys (stream_key TEXT NOT NULL, event_key TEXT NOT NULL, PRIMARY KEY(stream_key, event_key)) STRICT;`,
+  `ALTER TABLE execution_lock ADD COLUMN dispatch_started INTEGER NOT NULL DEFAULT 0 CHECK(dispatch_started IN (0,1));
+   CREATE TABLE scheduler_control (singleton INTEGER PRIMARY KEY CHECK(singleton=1), paused INTEGER NOT NULL CHECK(paused IN (0,1)), reason TEXT, updated_at TEXT NOT NULL) STRICT;
+   CREATE TABLE scheduler_queue (sequence INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL UNIQUE REFERENCES runs(id), task_id TEXT NOT NULL REFERENCES tasks(id), task_revision INTEGER NOT NULL, UNIQUE(task_id, task_revision)) STRICT;
+   CREATE TABLE scheduler_worker (singleton INTEGER PRIMARY KEY CHECK(singleton=1), token TEXT NOT NULL UNIQUE, owner_pid INTEGER NOT NULL, started_at TEXT NOT NULL, stream_key TEXT NOT NULL, trigger_mode TEXT NOT NULL CHECK(trigger_mode IN ('available','refresh'))) STRICT;
+   CREATE TABLE scheduler_streams (context_key TEXT PRIMARY KEY, cursor INTEGER NOT NULL, identity TEXT, grant_key TEXT, run_id TEXT REFERENCES runs(id)) STRICT;
+   CREATE TABLE scheduler_attention_ack (run_id TEXT PRIMARY KEY REFERENCES runs(id), acknowledged_at TEXT NOT NULL) STRICT;`,
 ];
 
 export class Database {

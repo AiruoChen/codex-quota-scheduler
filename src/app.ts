@@ -13,10 +13,14 @@ import { SqliteMonitorRepository } from "./storage/monitor-repository.js";
 import { digest } from "./monitor/recognize.js";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { SchedulerService } from "./scheduler/service.js";
+import { SqliteSchedulerRepository } from "./storage/scheduler-repository.js";
 
 export function createApp(config: AppConfig, clock: Clock = systemClock) {
   const provider = config.provider === "mock" ? new MockQuotaProvider(clock) : new AppServerQuotaProvider(config.codex, clock);
   const monitor = new QuotaMonitor(provider);
+  const streamKey = digest([config.provider, config.limitId, config.reservePercent, config.quotaMaxAgeMs,
+    config.provider === "codex" ? [config.codex.executable, config.codex.args, config.codex.home ?? process.env.CODEX_HOME ?? join(homedir(), ".codex")] : null]);
   let store: SqliteStore | undefined;
   let opening: Promise<SqliteStore> | undefined;
   let closed = false;
@@ -36,19 +40,20 @@ export function createApp(config: AppConfig, clock: Clock = systemClock) {
     await service.seed(config.tasksFile);
     return service;
   }
+  async function monitoring() {
+    const current = await storage();
+    if (!continuous) {
+      continuous = new ContinuousQuotaMonitor(config.provider === "codex" ? new AppServerQuotaFeed(config.codex, clock) : provider,
+        new SqliteMonitorRepository(current.database, streamKey, config, clock), clock);
+    }
+    return continuous;
+  }
   return {
-    status: () => monitor.sample(),
-    storage,
-    taskService,
-    async monitoring() {
+    status: () => monitor.sample(), storage, taskService, monitoring,
+    async scheduling() {
       const current = await storage();
-      if (!continuous) {
-        const streamKey = digest([config.provider, config.limitId, config.reservePercent, config.quotaMaxAgeMs,
-          config.provider === "codex" ? [config.codex.executable, config.codex.args, config.codex.home ?? process.env.CODEX_HOME ?? join(homedir(), ".codex")] : null]);
-        continuous = new ContinuousQuotaMonitor(config.provider === "codex" ? new AppServerQuotaFeed(config.codex, clock) : provider,
-          new SqliteMonitorRepository(current.database, streamKey, config, clock), clock);
-      }
-      return continuous;
+      return new SchedulerService(new SqliteSchedulerRepository(current.database, streamKey, config.scheduler?.trigger ?? "available", config, clock),
+        await monitoring(), new ManualExecutionService(config, current, clock), { provider: config.provider, persistent: config.storage.databasePath !== ":memory:" });
     },
     async execution() { return new ManualExecutionService(config, await storage(), clock); },
     async tasks() { await taskService(); return (await storage()).tasks.list(); },
@@ -62,7 +67,7 @@ export function createApp(config: AppConfig, clock: Clock = systemClock) {
         decision: evaluateQueue(snapshot, tasks, config, clock.now(), false),
         note: config.storage.databasePath === ":memory:"
           ? "模拟演示使用内存存储，不写入任务数据库，也不发送指令。"
-          : "仅预览，不发送指令；任务定义已持久化，自动调度与执行器尚未接入。",
+          : "仅预览，不发送指令；自动执行需要显式入队并启动调度。",
       };
     },
   };

@@ -7,6 +7,7 @@ import { ExecutionRepository } from "./execution-repository.js";
 import { AppError } from "../shared/errors.js";
 import { isRecord } from "../shared/validation.js";
 import { readMonitorEvent, readMonitorState } from "./monitor-repository.js";
+import { checkSchedulerStorage } from "./scheduler-repository.js";
 
 export interface TaskImport { task: TaskDefinition; prompt: string }
 
@@ -49,6 +50,7 @@ export class SqliteStore {
     }
     for (const row of this.database.connection.prepare("SELECT data_json FROM quota_monitor_state").all()) readMonitorState(String(row.data_json));
     for (const row of this.database.connection.prepare("SELECT * FROM quota_monitor_events").all()) readMonitorEvent(row);
+    checkSchedulerStorage(this.database);
     return { ok: true, tasks: tasks.length, runs: runs.length, versions };
   }
 

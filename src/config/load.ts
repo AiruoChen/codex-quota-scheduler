@@ -14,6 +14,7 @@ export interface AppConfig {
   tasksFile: string;
   codex: CodexOptions;
   storage: { databasePath: string };
+  scheduler?: { trigger: "available" | "refresh" };
 }
 
 function loadCodexOptions(value: unknown, base: string): CodexOptions {
@@ -50,6 +51,9 @@ export function parseConfig(input: unknown, path: string): AppConfig {
   }
   const storage = data.storage === undefined ? {} : requireRecord(data.storage, "storage");
   const databasePath = storage.databasePath === undefined ? "../.runtime/state.sqlite" : requireString(storage.databasePath, "storage.databasePath");
+  const scheduler = data.scheduler === undefined ? {} : requireRecord(data.scheduler, "scheduler");
+  const trigger = scheduler.trigger === undefined ? "available" : scheduler.trigger;
+  if (trigger !== "available" && trigger !== "refresh") throw new AppError("INVALID_CONFIG", "scheduler.trigger 必须是 available 或 refresh。");
   return {
     schemaVersion: 1,
     provider: data.provider,
@@ -60,5 +64,6 @@ export function parseConfig(input: unknown, path: string): AppConfig {
     tasksFile: resolve(dirname(configPath), requireString(data.tasksFile, "tasksFile")),
     codex: loadCodexOptions(data.codex, dirname(configPath)),
     storage: { databasePath: databasePath === ":memory:" ? databasePath : resolve(dirname(configPath), databasePath) },
+    scheduler: { trigger },
   };
 }

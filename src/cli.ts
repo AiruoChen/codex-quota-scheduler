@@ -15,6 +15,8 @@ const help = `用法：npm start -- 命令 [--config 文件路径]
   runs prepare 任务ID | list 任务ID | show 运行ID
   runs start 运行ID | cancel 运行ID | events 运行ID | recover 运行ID
   monitor sample | watch [--samples 次数] | status | events
+  scheduler enqueue 任务ID | remove 运行ID | acknowledge 运行ID
+  scheduler start [--samples 次数] | status | queue | pause | resume | recover
   storage init | check | backup 新备份文件
 默认优先 config/local.json，否则 config/example.json。demo 使用模拟数据和内存数据库。
 runs prepare 只保存 queued 记录和指令快照，不提交任务。`;
@@ -45,9 +47,11 @@ async function main(): Promise<unknown> {
   const needsRevision = command === "task" && ["update", "enable", "disable", "delete"].includes(action ?? "");
   const revision = revisionText === undefined ? undefined : Number(revisionText);
   if (needsRevision ? !Number.isSafeInteger(revision) || revision! < 1 : revision !== undefined) invalid();
-  if (!["status", "tasks", "preview", "demo", "config", "task", "runs", "storage", "monitor"].includes(command)) invalid();
+  if (!["status", "tasks", "preview", "demo", "config", "task", "runs", "storage", "monitor", "scheduler"].includes(command)) invalid();
   const samples = samplesText === undefined ? Infinity : Number(samplesText);
-  if (samplesText !== undefined && (command !== "monitor" || action !== "watch" || !Number.isSafeInteger(samples) || samples < 1)) invalid();
+  if (samplesText !== undefined && (!(command === "monitor" && action === "watch" || command === "scheduler" && action === "start") || !Number.isSafeInteger(samples) || samples < 1)) invalid();
+  if (command === "scheduler" && !(["enqueue", "remove", "acknowledge"].includes(action ?? "") && args.length === 2
+    || ["start", "status", "queue", "pause", "resume", "recover"].includes(action ?? "") && args.length === 1)) invalid();
   if (command === "monitor" && (!["sample", "watch", "status", "events"].includes(action ?? "") || args.length !== 1)) invalid();
   if (command === "task" && !(action === "list" && args.length === 1
     || ["show", "add", "import", "update", "enable", "disable", "delete", "history", "run"].includes(action ?? "") && args.length === 2)) invalid();
@@ -62,7 +66,7 @@ async function main(): Promise<unknown> {
     if (action === "set" && args.length === 3 && value) {
       let parsed: unknown;
       try { parsed = JSON.parse(args[2]!); } catch {
-        if (["provider", "limitId", "tasksFile", "codex.executable", "codex.home", "storage.databasePath"].includes(value)) parsed = args[2]!;
+        if (["provider", "limitId", "tasksFile", "codex.executable", "codex.home", "storage.databasePath", "scheduler.trigger"].includes(value)) parsed = args[2]!;
         else throw new AppError("INVALID_ARGUMENT", "配置值必须是 JSON，例如 20、true 或 []；字符串配置也可直接填文本。");
       }
       return manager.set(value, parsed);
@@ -85,6 +89,23 @@ async function main(): Promise<unknown> {
     } finally { process.removeListener("SIGINT", stop); process.removeListener("SIGTERM", stop); }
   }
   try {
+    if (command === "scheduler") {
+      const service = await app.scheduling();
+      const repo = service.repository;
+      if (action === "enqueue" && value) { await app.taskService(); return repo.enqueue(value); }
+      if (action === "remove" && value) return repo.remove(value);
+      if (action === "acknowledge" && value) { repo.acknowledge(value); return repo.status(); }
+      if (action === "status") return repo.status();
+      if (action === "queue") return repo.status().queue;
+      if (action === "pause") { repo.pause(); return repo.status(); }
+      if (action === "resume") { repo.resume(); return repo.status(); }
+      if (action === "recover") { repo.recover(); return repo.status(); }
+      const controller = new AbortController();
+      const stop = () => controller.abort();
+      process.once("SIGINT", stop); process.once("SIGTERM", stop);
+      try { await service.run(controller.signal, (event) => { console.log(JSON.stringify(event)); }, samples); return; }
+      finally { process.removeListener("SIGINT", stop); process.removeListener("SIGTERM", stop); }
+    }
     if (command === "monitor") {
       const monitor = await app.monitoring();
       if (action === "status") return monitor.repository.status();

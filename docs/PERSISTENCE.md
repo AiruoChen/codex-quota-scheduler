@@ -125,10 +125,10 @@ npm.cmd start -- task list
 - tasks/service.ts：文件导入、指令读取及任务编辑。
 - config/manage.ts：配置写锁、有效备份与原子保存。
 
-当前数据库 schema=4，新增额度监控检查点、事件和刷新去重表；schema=3 的执行权和事件保持兼容。
+当前数据库 schema=5，新增自动队列、调度进程权、暂停控制、刷新消费检查点和人工核对确认；旧任务、监控与执行记录保持兼容。
 升级按顺序在事务中执行；较新的 schema 会被拒绝，不能使用旧程序覆盖它。
 SQLite、个人配置、备份及真实任务均应保存在 .runtime/ 或 .local/，不提交到 GitHub。
-prepared 记录可以通过 runs start 显式启动；当前没有自动取任务机制。
+prepared 记录可以通过 runs start 显式启动；只有 scheduler enqueue 创建的记录进入自动队列。
 
 实现依据：[Node.js 22.12 SQLite 文档](https://nodejs.org/download/release/v22.12.0/docs/api/sqlite.html)、
 [SQLite 事务](https://www.sqlite.org/lang_transaction.html)、[SQLite VACUUM INTO](https://www.sqlite.org/lang_vacuum.html)。

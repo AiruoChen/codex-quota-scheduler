@@ -8,17 +8,21 @@ import { connectCodex, readAccount, readQuota } from "../adapters/codex/session.
 import { evaluateQueue } from "../scheduler/evaluate.js";
 import { isRecord } from "../shared/validation.js";
 import { runTurn } from "./turn-runner.js";
+import type { QuotaSnapshot } from "../domain/quota.js";
 
 export class CodexExecutor implements TaskExecutor {
   constructor(private readonly config: AppConfig, private readonly clock: Clock = systemClock) {}
 
-  async execute(run: TaskRun, signal: AbortSignal, sink: ExecutionSink): Promise<ExecutionOutcome> {
+  async execute(run: TaskRun, signal: AbortSignal, sink: ExecutionSink, expectedAccount?: QuotaSnapshot["account"]): Promise<ExecutionOutcome> {
     if (this.config.provider !== "codex") throw new AppError("EXECUTION_REQUIRES_CODEX", "手动执行必须使用 provider=codex，不能使用模拟额度。");
     if (!(await stat(run.taskSnapshot.projectDir)).isDirectory()) throw new AppError("PROJECT_NOT_FOUND", "任务工作目录不是有效目录。");
     if (!run.promptSnapshot.trim()) throw new AppError("EMPTY_PROMPT", "任务指令为空。");
     const { client, launch } = await connectCodex(this.config.codex, signal);
     try {
       const quota = await readQuota(client, this.clock, launch.version, signal);
+      if (expectedAccount && (!quota.account || (["type", "email", "planType", "workspaceId"] as const).some((key) => quota.account![key] !== expectedAccount[key]))) {
+        throw new AppError("ACCOUNT_CHANGED", "执行账户与调度采样账户不一致，指令未发送。");
+      }
       const decision = evaluateQueue(quota, [run.taskSnapshot], this.config, this.clock.now(), false);
       sink.event("preflight", { source: quota.source, cliVersion: launch.version, planType: quota.account?.planType, decision });
       if (decision.action !== "run") return { status: "waiting_quota", output: "", error: `QUOTA_WAIT: ${decision.reason}` };

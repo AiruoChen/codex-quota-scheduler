@@ -5,6 +5,7 @@ import type { ExecutionOutcome, ExecutionSink, TaskRun } from "../domain/task.js
 import { AppError } from "../shared/errors.js";
 import type { SqliteStore } from "../storage/sqlite-store.js";
 import { CodexExecutor } from "./codex-executor.js";
+import type { QuotaSnapshot } from "../domain/quota.js";
 
 // Do not retain auth-shaped data if a tool quotes it in its final message.
 function redact(value: string): string {
@@ -19,16 +20,17 @@ export class ManualExecutionService {
 
   async runTask(taskId: string, signal: AbortSignal, started?: (id: string) => void): Promise<TaskRun> {
     this.requireReal();
-    return this.executeClaimed(this.store.execution.claimNew(taskId), signal, started);
+    return this.executeClaimed(this.store.execution.claimNew(taskId).id, signal, started);
   }
 
   async start(id: string, signal: AbortSignal, started?: (id: string) => void): Promise<TaskRun> {
     this.requireReal();
-    return this.executeClaimed(this.store.execution.claim(id), signal, started);
+    return this.executeClaimed(this.store.execution.claim(id).id, signal, started);
   }
 
-  private async executeClaimed(run: TaskRun, signal: AbortSignal, started?: (id: string) => void): Promise<TaskRun> {
-    const id = run.id;
+  async executeClaimed(id: string, signal: AbortSignal, started?: (id: string) => void, expectedAccount?: QuotaSnapshot["account"]): Promise<TaskRun> {
+    this.requireReal();
+    const run = this.store.execution.takeClaim(id);
     let finalized = false;
     const controller = new AbortController();
     const abort = () => controller.abort("cancelled");
@@ -55,7 +57,7 @@ export class ManualExecutionService {
     try {
       started?.(id);
       let result: ExecutionOutcome;
-      try { result = await this.executor.execute(run, controller.signal, sink); }
+      try { result = await this.executor.execute(run, controller.signal, sink, expectedAccount); }
       catch (error) {
         const failure = error instanceof AppError ? error : new AppError("EXECUTION_FAILED", "手动执行未完成，请检查项目目录、CLI 和网络。");
         result = {

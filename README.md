@@ -3,7 +3,7 @@
 本地运行的 Codex 额度监控与任务调度项目，面向 Windows，采用 TypeScript + Node.js。
 目标：提前维护任务，在账户额度恢复且其他限制允许时，自动提交给 Codex。
 
-**当前已完成真实额度读取、持久化管理、手动执行、持续监控及自动调度。默认演示使用模拟数据和内存存储；自动队列初始暂停，须显式入队和启动。**
+**当前已完成真实额度读取、持久化管理、执行、持续监控、自动调度和异常/重启恢复。默认演示使用模拟数据和内存存储；自动队列初始暂停，须显式入队和启动。**
 
 ## 快速开始
 
@@ -82,6 +82,20 @@ npm.cmd start -- scheduler start
 可用 `config set scheduler.trigger refresh` 切换为确认新刷新后触发一项任务，修改配置后重启进程生效。
 审批、失败或结果不明会暂停队列；核对、恢复和触发模式详见 [自动调度说明](docs/SCHEDULING.md)。
 
+## 异常与重启恢复
+
+```powershell
+npm.cmd start -- recovery status
+npm.cmd start -- recovery repair
+npm.cmd start -- recovery inspect 运行ID
+npm.cmd start -- recovery reconcile 运行ID
+```
+
+启动调度前会检查遗留状态；异常时返回 RECOVERY_REQUIRED，不自动解锁或重新发送指令。
+repair 只清理确认退出的进程权，并把结果不明记录转为待核对；不会宣称远端已停止。
+inspect 只读原会话/回合；reconcile 在账户、目录和准确回合匹配时恢复已确认结果，队列保持暂停。
+缺少来源或回合 ID 的旧记录继续人工核对，不猜测对应任务。使用流程和恢复日志见 [恢复说明](docs/RECOVERY.md)。
+
 ## 命令
 
 先运行 `npm.cmd run build`，然后使用：
@@ -156,6 +170,7 @@ src/
   monitor/         轮询、通知唤醒、退避与纯函数刷新识别
   scheduler/       纯条件判断和串行调度服务，仅依赖领域接口
   executor/        手动执行服务、Codex 接入与回合事件处理
+  recovery/        只读远端核对与本地恢复应用服务
   storage/         SQLite、版本迁移、任务/运行仓储和备份
   shared/          错误与校验工具
   app.ts           组合各模块
@@ -172,8 +187,8 @@ docs/              需求、架构和分阶段开发路线
 下一块是 **长期运行与管理界面**，具体任务与验收见 [开发路线](docs/ROADMAP.md)。
 整体职责与数据流见 [架构说明](docs/ARCHITECTURE.md)，产品边界见 [需求清单](docs/REQUIREMENTS.md)。
 
-当前手动执行已串行化并防止重复启动同一记录；遗留执行权需人工核对。
-自动调度已接入监控和持久化队列；遗留执行权与结果不明仍需人工核对，后台服务和管理界面尚未实现。
+异常检测、显式本地修复与准确回合结果核对已接通；证据不足的记录继续保留 needs_attention。
+恢复不会自动重发或恢复派发；后台服务和管理界面尚未实现。
 
 ## 接口依据
 
@@ -181,7 +196,7 @@ docs/              需求、架构和分阶段开发路线
 `account/rateLimits/read` 和额度更新通知。窗口时长、已用比例和重置时间必须以返回数据为准。
 官方 [非交互模式](https://learn.chatgpt.com/docs/non-interactive-mode) 可作为后续执行器的接入依据。
 
-文档核对日期：2026-10-20。真实接入时需再次核对本机 Codex 版本与对应协议。
+文档核对日期：2026-10-21。真实接入时需再次核对本机 Codex 版本与对应协议。
 
 ## 仓库
 

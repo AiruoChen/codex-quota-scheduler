@@ -15,6 +15,9 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { SchedulerService } from "./scheduler/service.js";
 import { SqliteSchedulerRepository } from "./storage/scheduler-repository.js";
+import { SqliteRecoveryRepository } from "./storage/recovery-repository.js";
+import { CodexRecoveryReader } from "./adapters/codex/recovery-reader.js";
+import { RecoveryService } from "./recovery/service.js";
 
 export function createApp(config: AppConfig, clock: Clock = systemClock) {
   const provider = config.provider === "mock" ? new MockQuotaProvider(clock) : new AppServerQuotaProvider(config.codex, clock);
@@ -50,6 +53,12 @@ export function createApp(config: AppConfig, clock: Clock = systemClock) {
   }
   return {
     status: () => monitor.sample(), storage, taskService, monitoring,
+    async recovery() {
+      const current = await storage();
+      await current.check();
+      return new RecoveryService(new SqliteRecoveryRepository(current.database, clock), new CodexRecoveryReader(config.codex),
+        { provider: config.provider, persistent: config.storage.databasePath !== ":memory:" });
+    },
     async scheduling() {
       const current = await storage();
       return new SchedulerService(new SqliteSchedulerRepository(current.database, streamKey, config.scheduler?.trigger ?? "available", config, clock),

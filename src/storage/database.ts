@@ -43,6 +43,9 @@ export const migrations = [
    CREATE TABLE scheduler_worker (singleton INTEGER PRIMARY KEY CHECK(singleton=1), token TEXT NOT NULL UNIQUE, owner_pid INTEGER NOT NULL, started_at TEXT NOT NULL, stream_key TEXT NOT NULL, trigger_mode TEXT NOT NULL CHECK(trigger_mode IN ('available','refresh'))) STRICT;
    CREATE TABLE scheduler_streams (context_key TEXT PRIMARY KEY, cursor INTEGER NOT NULL, identity TEXT, grant_key TEXT, run_id TEXT REFERENCES runs(id)) STRICT;
    CREATE TABLE scheduler_attention_ack (run_id TEXT PRIMARY KEY REFERENCES runs(id), acknowledged_at TEXT NOT NULL) STRICT;`,
+  `CREATE TABLE execution_origins (run_id TEXT PRIMARY KEY REFERENCES runs(id), data_json TEXT NOT NULL) STRICT;
+   CREATE TABLE recovery_events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT REFERENCES runs(id), created_at TEXT NOT NULL, type TEXT NOT NULL, data_json TEXT NOT NULL) STRICT;
+   CREATE INDEX recovery_events_by_run ON recovery_events(run_id, sequence);`,
 ];
 
 export class Database {

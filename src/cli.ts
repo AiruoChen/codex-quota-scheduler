@@ -17,6 +17,7 @@ const help = `用法：npm start -- 命令 [--config 文件路径]
   monitor sample | watch [--samples 次数] | status | events
   scheduler enqueue 任务ID | remove 运行ID | acknowledge 运行ID
   scheduler start [--samples 次数] | status | queue | pause | resume | recover
+  recovery status | repair | events [运行ID] | inspect 运行ID | reconcile 运行ID
   storage init | check | backup 新备份文件
 默认优先 config/local.json，否则 config/example.json。demo 使用模拟数据和内存数据库。
 runs prepare 只保存 queued 记录和指令快照，不提交任务。`;
@@ -47,7 +48,9 @@ async function main(): Promise<unknown> {
   const needsRevision = command === "task" && ["update", "enable", "disable", "delete"].includes(action ?? "");
   const revision = revisionText === undefined ? undefined : Number(revisionText);
   if (needsRevision ? !Number.isSafeInteger(revision) || revision! < 1 : revision !== undefined) invalid();
-  if (!["status", "tasks", "preview", "demo", "config", "task", "runs", "storage", "monitor", "scheduler"].includes(command)) invalid();
+  if (!["status", "tasks", "preview", "demo", "config", "task", "runs", "storage", "monitor", "scheduler", "recovery"].includes(command)) invalid();
+  if (command === "recovery" && !(["status", "repair"].includes(action ?? "") && args.length === 1
+    || action === "events" && (args.length === 1 || args.length === 2) || ["inspect", "reconcile"].includes(action ?? "") && args.length === 2)) invalid();
   const samples = samplesText === undefined ? Infinity : Number(samplesText);
   if (samplesText !== undefined && (!(command === "monitor" && action === "watch" || command === "scheduler" && action === "start") || !Number.isSafeInteger(samples) || samples < 1)) invalid();
   if (command === "scheduler" && !(["enqueue", "remove", "acknowledge"].includes(action ?? "") && args.length === 2
@@ -89,6 +92,20 @@ async function main(): Promise<unknown> {
     } finally { process.removeListener("SIGINT", stop); process.removeListener("SIGTERM", stop); }
   }
   try {
+    if (command === "recovery") {
+      const service = await app.recovery();
+      if (action === "status") return service.repository.report();
+      if (action === "repair") return service.repository.repair();
+      if (action === "events") return service.repository.events(value);
+      const controller = new AbortController();
+      const stop = () => controller.abort();
+      process.once("SIGINT", stop); process.once("SIGTERM", stop);
+      try {
+        const result = action === "inspect" ? await service.inspect(value!, controller.signal) : await service.reconcile(value!, controller.signal);
+        if (result.result.kind !== "terminal") process.exitCode = 1;
+        return result;
+      } finally { process.removeListener("SIGINT", stop); process.removeListener("SIGTERM", stop); }
+    }
     if (command === "scheduler") {
       const service = await app.scheduling();
       const repo = service.repository;

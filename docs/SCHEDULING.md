@@ -95,6 +95,10 @@ acknowledge 表示使用者已核对，允许调度其他排队记录；不改�
 
 ## 崩溃与恢复
 
+新版本启动调度前还会执行本地异常检查；发现遗留状态时返回 RECOVERY_REQUIRED。
+推荐先使用 `recovery status` 查看，再用 `recovery repair` 显式修复本地进程权，
+对结果不明记录调用 `recovery inspect / reconcile` 读取原回合证据。具体流程见 [异常恢复](RECOVERY.md)。
+
 ```powershell
 npm.cmd start -- scheduler status
 npm.cmd start -- scheduler recover
@@ -110,7 +114,7 @@ PID 存在、被复用或无法判断时拒绝恢复；不会按本地超时抢�
 
 ## 数据与验证
 
-数据库 schema 5 新增队列、进程权、暂停状态、刷新消费上下文和人工核对确认表，旧任务、监控和运行记录保持兼容。
+数据库 schema 5 引入自动队列表；当前 schema 6 还保存执行来源和恢复审计，旧任务、监控和运行记录保持兼容。
 运行执行权增加 dispatch_started 一次使用标记，执行器从数据库重读快照并只接受一次执行入口。
 启动前核对新鲜快照，执行器再读真实账户和额度，并核对其账户与调度采样一致；账户不一致时不发送指令。
 模型、沙箱、目录和超时仍来自任务快照，默认只读，不硬编码模型或额度周期。

@@ -6,11 +6,7 @@ import { AppError } from "../shared/errors.js";
 import type { SqliteStore } from "../storage/sqlite-store.js";
 import { CodexExecutor } from "./codex-executor.js";
 import type { QuotaSnapshot } from "../domain/quota.js";
-
-// Do not retain auth-shaped data if a tool quotes it in its final message.
-function redact(value: string): string {
-  return value.replace(/Bearer\s+[\w.+/=-]+/gi, "Bearer [redacted]").replace(/\bsk-[A-Za-z0-9_-]{16,}/g, "[redacted]");
-}
+import { redact } from "../shared/redact.js";
 
 export class ManualExecutionService {
   private readonly executor: TaskExecutor;
@@ -48,6 +44,7 @@ export class ManualExecutionService {
       } catch (error) { persistenceError = error; controller.abort("storage_error"); }
     }, 200);
     const sink: ExecutionSink = {
+      origin: (origin) => this.store.execution.origin(id, origin),
       event: (type, data) => this.store.execution.event(id, type, data),
       thread: (threadId) => this.store.execution.progress(id, { threadId }),
       submitted: () => { this.store.execution.event(id, "submission_started", {}); submissionStarted = true; },

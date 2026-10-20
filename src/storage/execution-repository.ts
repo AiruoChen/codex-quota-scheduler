@@ -3,6 +3,8 @@ import type { ExecutionEvent, TaskRun } from "../domain/task.js";
 import { AppError } from "../shared/errors.js";
 import type { Database } from "./database.js";
 import { readRun, SqliteRunRepository } from "./run-repository.js";
+import type { ExecutionOrigin } from "../domain/recovery.js";
+import { assertRecoveryClear, pauseForRecovery, recoveryEvent, readOrigin } from "./recovery-repository.js";
 
 export class ExecutionRepository {
   constructor(private readonly db: Database, private readonly clock: Clock) {}
@@ -17,6 +19,7 @@ export class ExecutionRepository {
 
   /** Only call inside a synchronous database transaction. */
   claimInside(id: string): TaskRun {
+    assertRecoveryClear(this.db, this.clock, "execution");
     const run = this.get(id);
     if (!["queued", "waiting_quota"].includes(run.status)) throw new AppError("RUN_ALREADY_STARTED", "此记录已启动或已结束，不能重复提交。");
     const task = this.db.connection.prepare("SELECT definition_json FROM tasks WHERE id=? AND deleted_at IS NULL").get(run.taskId);
@@ -45,6 +48,17 @@ export class ExecutionRepository {
 
   cancelled(id: string): boolean {
     return this.db.connection.prepare("SELECT cancel_requested FROM execution_lock WHERE run_id=?").get(id)?.cancel_requested === 1;
+  }
+
+  origin(id: string, origin: ExecutionOrigin): void {
+    this.db.transaction(() => {
+      readOrigin(JSON.stringify(origin));
+      if (this.get(id).status !== "running" || this.db.connection.prepare("SELECT owner_pid FROM execution_lock WHERE run_id=?").get(id)?.owner_pid !== process.pid) {
+        throw new AppError("RUN_CONFLICT", "保存执行来源时执行权已变化。");
+      }
+      if (this.db.connection.prepare("SELECT sequence FROM execution_events WHERE run_id=? AND type='submission_started'").get(id)) throw new AppError("RUN_ALREADY_STARTED", "提交后不能改写执行来源。");
+      this.db.connection.prepare("INSERT INTO execution_origins VALUES (?,?) ON CONFLICT(run_id) DO UPDATE SET data_json=excluded.data_json").run(id, JSON.stringify(origin));
+    });
   }
 
   takeClaim(id: string): TaskRun {
@@ -80,6 +94,8 @@ export class ExecutionRepository {
         ? { ...run, status: "needs_attention" as const, error: "EXECUTION_OWNER_EXITED: 请核对已有会话及文件变更；不会自动重发。" } : run;
       this.write(next);
       this.db.connection.prepare("DELETE FROM execution_lock WHERE run_id=?").run(id);
+      pauseForRecovery(this.db, this.clock);
+      recoveryEvent(this.db, this.clock, id, "execution_released", { ownerPid: Number(lock.owner_pid), status: next.status });
       return next;
     });
   }

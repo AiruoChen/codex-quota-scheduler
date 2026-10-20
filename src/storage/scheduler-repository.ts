@@ -11,6 +11,7 @@ import { ExecutionRepository } from "./execution-repository.js";
 import { readMonitorEvent, readMonitorState } from "./monitor-repository.js";
 import { readRun, SqliteRunRepository } from "./run-repository.js";
 import { readStoredTask } from "./task-repository.js";
+import { assertRecoveryClear, recoveryEvent } from "./recovery-repository.js";
 
 export class SqliteSchedulerRepository implements SchedulerRepository {
   private readonly context: string;
@@ -83,6 +84,7 @@ export class SqliteSchedulerRepository implements SchedulerRepository {
 
   acquire(): string {
     return this.db.transaction(() => {
+      assertRecoveryClear(this.db, this.clock, "scheduler");
       if (this.db.connection.prepare("SELECT token FROM scheduler_worker").get()) throw new AppError("SCHEDULER_BUSY", "数据库已有调度进程；若它已退出，请先 scheduler recover。");
       const token = randomUUID();
       this.db.connection.prepare("INSERT INTO scheduler_worker VALUES (1,?,?,?,?,?)").run(token, process.pid, this.clock.now().toISOString(), this.streamKey, this.trigger);
@@ -103,6 +105,7 @@ export class SqliteSchedulerRepository implements SchedulerRepository {
       if (!dead) throw new AppError("SCHEDULER_BUSY", "调度进程仍存在或无法确认退出，不能释放执行权。");
       this.db.connection.prepare("DELETE FROM scheduler_worker").run();
       this.pause("worker_recovered");
+      recoveryEvent(this.db, this.clock, null, "scheduler_released", { ownerPid: Number(worker.owner_pid) });
     });
   }
 

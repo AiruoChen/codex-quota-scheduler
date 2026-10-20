@@ -82,6 +82,7 @@ export interface ExecutionOutcome {
 }
 
 export interface ExecutionSink {
+  origin(origin: import("./recovery.js").ExecutionOrigin): void;
   event(type: string, data: Record<string, unknown>): void;
   thread(threadId: string): void;
   submitted(): void;

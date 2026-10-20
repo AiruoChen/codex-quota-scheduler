@@ -9,6 +9,7 @@ import { evaluateQueue } from "../scheduler/evaluate.js";
 import { isRecord } from "../shared/validation.js";
 import { runTurn } from "./turn-runner.js";
 import type { QuotaSnapshot } from "../domain/quota.js";
+import { codexConnectionKey } from "../adapters/codex/connection-key.js";
 
 export class CodexExecutor implements TaskExecutor {
   constructor(private readonly config: AppConfig, private readonly clock: Clock = systemClock) {}
@@ -26,6 +27,8 @@ export class CodexExecutor implements TaskExecutor {
       const decision = evaluateQueue(quota, [run.taskSnapshot], this.config, this.clock.now(), false);
       sink.event("preflight", { source: quota.source, cliVersion: launch.version, planType: quota.account?.planType, decision });
       if (decision.action !== "run") return { status: "waiting_quota", output: "", error: `QUOTA_WAIT: ${decision.reason}` };
+      if (!quota.account) throw new AppError("ACCOUNT_UNKNOWN", "执行账户未知，不能发送任务。");
+      sink.origin({ connectionKey: codexConnectionKey(this.config.codex), account: quota.account, cliVersion: launch.version });
       const task = run.taskSnapshot;
       if (task.session.mode === "resume") {
         const stored = await client.request("thread/read", { threadId: task.session.threadId, includeTurns: false }, signal);

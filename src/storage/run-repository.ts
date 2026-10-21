@@ -61,6 +61,14 @@ export class SqliteRunRepository implements RunRepository {
       .map((row) => readRun(row.data_json));
   }
 
+  async recent(limit = 50, offset = 0): Promise<TaskRun[]> {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100 || !Number.isSafeInteger(offset) || offset < 0) {
+      throw new AppError("INVALID_ARGUMENT", "运行分页参数无效。");
+    }
+    return this.db.connection.prepare("SELECT data_json FROM runs ORDER BY rowid DESC LIMIT ? OFFSET ?")
+      .all(limit, offset).map((row) => readRun(row.data_json));
+  }
+
   async update(id: string, update: RunUpdate, expectedStatus: TaskStatus): Promise<TaskRun> {
     return this.db.transaction(() => {
       const row = this.db.connection.prepare("SELECT data_json FROM runs WHERE id=?").get(id);

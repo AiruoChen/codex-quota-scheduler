@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Codex Quota Scheduler · 本地控制台</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" type="module"></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <a href="#overview" class="brand"><span class="brand-mark">C<span>↗</span></span><span>Codex Quota<span class="brand-sub">SCHEDULER / 本地控制台</span></span></a>
+    <div class="nav-label">工作空间</div>
+    <nav aria-label="主要导航">
+      <a href="#overview" data-view="overview"><span aria-hidden="true">◫</span>运行概览</a>
+      <a href="#tasks" data-view="tasks"><span aria-hidden="true">☷</span>任务管理</a>
+      <a href="#runs" data-view="runs"><span aria-hidden="true">↗</span>运行记录</a>
+      <a href="#recovery" data-view="recovery"><span aria-hidden="true">◇</span>异常与恢复</a>
+      <a href="#settings" data-view="settings"><span aria-hidden="true">⚙</span>配置与日志</a>
+    </nav>
+    <div class="sidebar-footer"><span class="status-dot"></span>仅在本机运行<span>127.0.0.1 · 数据保存在本地</span></div>
+  </aside>
+  <main>
+    <header class="topbar"><div><span class="eyebrow">工作空间 / <span id="breadcrumb">运行概览</span></span><h1 id="page-title">运行概览</h1></div><div class="top-actions"><span id="source" class="badge">连接中</span><button id="reload" class="icon-button" title="重新加载页面" aria-label="重新加载页面">↻</button></div></header>
+    <div id="notice" class="notice" role="status" hidden></div>
+    <div id="connection" class="notice danger" role="alert" hidden></div>
+    <section id="overview" class="view">
+      <div class="section-heading"><div><h2>账户额度</h2><p id="quota-caption">正在读取服务端额度…</p></div><div class="actions"><span id="monitor-status" class="subtle"></span><button data-action="monitor-start">开启监控</button><button data-action="monitor-stop" class="quiet">停止监控</button></div></div>
+      <div id="quota-windows" class="quota-grid"></div>
+      <div class="two-columns">
+        <article class="panel"><div class="panel-heading"><h2>自动调度</h2><span id="scheduler-badge" class="badge"></span></div><p id="scheduler-description" class="description"></p><div class="scheduler-status"><span id="worker-status"></span><span id="trigger-mode" class="subtle"></span></div><div class="actions wrap"><button data-action="scheduler-start">启动调度进程</button><button data-action="resume" class="primary">恢复队列</button><button data-action="pause">暂停队列</button><button data-action="scheduler-stop" class="quiet">停止进程</button></div><p class="hint">仅执行显式入队的版本快照。暂停队列会等待当前任务完成；停止进程会请求取消当前执行。</p></article>
+        <article class="panel"><div class="panel-heading"><h2>当前队列</h2><a href="#tasks" class="text-link">管理任务 ↗</a></div><div id="queue"></div></article>
+      </div>
+      <article class="panel"><div class="panel-heading"><h2>监控动态</h2><span id="updated-at" class="subtle"></span></div><div id="monitor-events"></div></article>
+      <article id="jobs-panel" class="panel" hidden><div class="panel-heading"><h2>后台操作</h2><span class="subtle">关闭页面后仍继续运行</span></div><div id="jobs"></div></article>
+    </section>
+    <section id="tasks" class="view" hidden>
+      <div class="section-heading"><div><h2>维护任务，按需入队</h2><p>编辑生成新版本；已入队的指令快照保持不变。</p></div><button id="new-task" class="primary">＋ 新建任务</button></div>
+      <div class="panel table-wrap"><table><thead><tr><th>任务</th><th>版本</th><th>优先级</th><th>状态</th><th>操作</th></tr></thead><tbody id="task-rows"></tbody></table><div id="tasks-empty" class="empty" hidden>还没有任务。新建任务后，可以手动执行或加入自动队列。</div></div>
+    </section>
+    <section id="runs" class="view" hidden>
+      <div class="section-heading"><div><h2>执行历史</h2><p>查看持久化输出、准确回合与恢复事件。</p></div><div class="actions"><button id="runs-prev">上一页</button><span id="runs-page" class="subtle"></span><button id="runs-next">下一页</button></div></div>
+      <div class="panel table-wrap"><table><thead><tr><th>任务 / 运行 ID</th><th>状态</th><th>版本</th><th>创建时间</th><th>操作</th></tr></thead><tbody id="run-rows"></tbody></table><div id="runs-empty" class="empty" hidden>尚无运行记录。入队和手动执行都会保存独立快照。</div></div>
+    </section>
+    <section id="recovery" class="view" hidden>
+      <div class="section-heading"><div><h2>核对后再继续</h2><p>修复只处理确认退出的进程；远端核对只读取已记录的会话和回合。</p></div><button id="repair">检查并修复遗留状态</button></div>
+      <article class="panel"><h2>本地检查</h2><div id="recovery-report"></div></article>
+      <article class="panel"><div class="panel-heading"><h2>待人工核对</h2><a href="#runs" class="text-link">全部运行记录 ↗</a></div><div id="attention"></div><p class="hint">审批或补充输入请求不会自动同意。确认已核对仅解除调度阻塞，记录仍保留待处理状态。</p></article>
+    </section>
+    <section id="settings" class="view" hidden>
+      <div class="section-heading"><div><h2>运行配置</h2><p>保存时校验并备份；重启本地服务后生效。</p></div><span id="config-difference" class="badge"></span></div>
+      <article class="panel"><form id="config-form"><div class="config-editor"><label>配置项<select id="config-key"><option>provider</option><option>pollIntervalMs</option><option>quotaMaxAgeMs</option><option>reservePercent</option><option>limitId</option><option>scheduler.trigger</option><option>tasksFile</option><option>storage.databasePath</option><option>codex.executable</option><option>codex.args</option><option>codex.home</option><option>codex.requestTimeoutMs</option><option>codex.shutdownTimeoutMs</option></select></label><label>值（JSON 或字符串）<input id="config-value" required autocomplete="off"></label><button type="submit" class="primary">保存配置</button></div><p class="hint">provider=mock 为模拟额度，不能提交真实任务。修改前请停止调度并等待执行或核对完成。</p></form><details><summary>查看正在生效的配置</summary><pre id="active-config"></pre></details></article>
+      <article class="panel"><div class="panel-heading"><h2>运行日志</h2><button id="refresh-logs">刷新日志</button></div><p class="hint">日志自动轮转，仅记录事件与错误代码。任务输出保存在运行详情中。</p><pre id="runtime-logs" class="log-output"></pre></article>
+    </section>
+    <footer>Codex Quota Scheduler<span id="footer-status">正在连接本地服务</span></footer>
+  </main>
+  <dialog id="task-dialog"><form id="task-form"><div class="dialog-heading"><div><span class="eyebrow">任务编辑</span><h2 id="editor-title">新建任务</h2></div><button type="button" data-close="task-dialog" class="icon-button" aria-label="关闭任务编辑">×</button></div><div class="form-grid"><label>任务名称<input name="name" required maxlength="150"></label><label>任务 ID<input name="id" required maxlength="120" placeholder="例如 review-project"></label><label class="full">项目目录<input name="projectDir" required placeholder="绝对路径，或相对于配置文件的路径"></label><label>优先级<input name="priority" type="number" min="0" max="1000" value="10" required></label><label class="check-label"><input name="enabled" type="checkbox" checked>启用此任务</label><label class="full">指令<textarea name="prompt" rows="7" required placeholder="明确任务范围、预期结果与验证方式"></textarea></label><label>文件访问权限<select name="sandbox"><option value="read-only">只读</option><option value="workspace-write">允许修改项目目录</option></select></label><label>最长运行时间（秒）<input name="timeout" type="number" min="1" max="86400" value="900" required></label></div><details><summary>模型与会话</summary><div class="form-grid"><label>模型（留空使用 Codex 默认）<input name="model" placeholder="使用本机可用的模型"></label><label>推理强度<select name="effort"><option value="">默认</option><option>low</option><option>medium</option><option>high</option><option>xhigh</option></select></label><label>会话方式<select name="session"><option value="new">新建会话</option><option value="resume">续接指定会话</option></select></label><label>续接会话 ID<input name="threadId" autocomplete="off"></label></div></details><p id="task-error" class="form-error" role="alert"></p><div class="dialog-footer"><span class="hint">指令直接保存到本地数据库</span><div class="actions"><button type="button" data-close="task-dialog">取消</button><button type="submit" class="primary">保存任务</button></div></div></form></dialog>
+  <dialog id="run-dialog"><div class="dialog-heading"><div><span class="eyebrow">运行详情</span><h2 id="run-title">执行记录</h2></div><button data-close="run-dialog" class="icon-button" aria-label="关闭运行详情">×</button></div><div id="run-detail"></div></dialog>
+</body>
+</html>

@@ -18,6 +18,8 @@ const help = `用法：npm start -- 命令 [--config 文件路径]
   scheduler enqueue 任务ID | remove 运行ID | acknowledge 运行ID
   scheduler start [--samples 次数] | status | queue | pause | resume | recover
   recovery status | repair | events [运行ID] | inspect 运行ID | reconcile 运行ID
+  ui [--port 8765]
+  service start [--port 8765] | status | stop | logs | recover
   storage init | check | backup 新备份文件
 默认优先 config/local.json，否则 config/example.json。demo 使用模拟数据和内存数据库。
 runs prepare 只保存 queued 记录和指令快照，不提交任务。`;
@@ -40,11 +42,33 @@ async function main(): Promise<unknown> {
   const explicitConfig = takeOption(args, "--config");
   const revisionText = takeOption(args, "--revision");
   const samplesText = takeOption(args, "--samples");
+  const portText = takeOption(args, "--port");
   const command = args.shift() ?? "help";
   if (["help", "--help", "-h"].includes(command)) { console.log(help); return; }
-  const configPath = explicitConfig ?? (command === "demo" || !existsSync("config/local.json") ? "config/example.json" : "config/local.json");
+  const configPath = explicitConfig ?? (["ui", "service"].includes(command) ? "config/local.json"
+    : command === "demo" || !existsSync("config/local.json") ? "config/example.json" : "config/local.json");
   const action = args[0];
   const value = args[1];
+  const port = portText === undefined ? 8765 : Number(portText);
+  if (portText !== undefined && !(command === "ui" || command === "service" && action === "start")
+    || !Number.isSafeInteger(port) || port < 0 || port > 65535) invalid();
+  if (command === "ui" || command === "service") {
+    if (revisionText !== undefined || samplesText !== undefined) invalid();
+    if (!explicitConfig && (command === "ui" || action === "start") && !existsSync(configPath)) await new ConfigManager(configPath).init("config/example.json");
+    const { runForeground, startBackground, runtimeStatus, stopBackground } = await import("./runtime/service.js");
+    if (command === "ui" && args.length === 0) return runForeground(configPath, port);
+    if (command !== "service" || args.length !== 1) invalid();
+    if (action === "start") return startBackground(configPath, port);
+    if (action === "status") return runtimeStatus(configPath);
+    if (action === "stop") return stopBackground(configPath);
+    const { runtimePaths, recoverInstance } = await import("./runtime/instance.js");
+    if (action === "recover") return recoverInstance(configPath);
+    if (action === "logs") {
+      const { RuntimeLogger } = await import("./runtime/log.js");
+      return { text: new RuntimeLogger(runtimePaths(configPath).log).tail() };
+    }
+    invalid();
+  }
   const needsRevision = command === "task" && ["update", "enable", "disable", "delete"].includes(action ?? "");
   const revision = revisionText === undefined ? undefined : Number(revisionText);
   if (needsRevision ? !Number.isSafeInteger(revision) || revision! < 1 : revision !== undefined) invalid();

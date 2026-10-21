@@ -3,7 +3,7 @@
 本地运行的 Codex 额度监控与任务调度项目，面向 Windows，采用 TypeScript + Node.js。
 目标：提前维护任务，在账户额度恢复且其他限制允许时，自动提交给 Codex。
 
-**当前已完成真实额度读取、持久化管理、执行、持续监控、自动调度和异常/重启恢复。默认演示使用模拟数据和内存存储；自动队列初始暂停，须显式入队和启动。**
+**当前已完成真实额度读取、持久化管理、执行、持续监控、自动调度、异常/重启恢复，以及本地管理界面与运行包装。默认演示使用模拟数据和内存存储；自动队列初始暂停，须显式入队和启动。**
 
 ## 快速开始
 
@@ -22,6 +22,32 @@ Windows PowerShell 若限制执行 npm.ps1，请使用上面的 npm.cmd；其他
 `action: "run"` 仅表示满足当前预览条件，不代表已发送指令。
 `demo` 不修改个人数据库。Node.js 22.12 的 SQLite 实验参数已包含在 npm 启动和测试脚本中，
 该版本可能输出 SQLite ExperimentalWarning，不影响 JSON 结果。
+
+## 本地管理界面
+
+```powershell
+npm.cmd run ui
+```
+
+打开终端打印的地址，默认 `http://127.0.0.1:8765`。首次启动自动初始化被 Git 忽略的
+`config/local.json`，默认使用模拟额度。也可以在构建后双击 `launch.cmd`；macOS/Linux 使用 `sh launch.sh`。
+
+界面提供额度与刷新动态、任务编辑、版本快照、显式入队、手动执行、暂停/恢复调度、取消请求、
+运行输出、异常核对、配置与轮转日志。服务启动只开启监控；使用真实配置时，先启动调度进程，再明确恢复队列。
+关闭浏览器不会结束后台操作；配置保存后需重启服务。
+
+```powershell
+npm.cmd start -- service start
+npm.cmd start -- service status
+npm.cmd start -- service logs
+npm.cmd start -- service stop
+npm.cmd run package
+```
+
+后台服务通过已验证的本机实例停止，不按 PID 强杀进程。异常退出时使用 `service recover` 显式处理服务记录，
+数据库执行权和结果仍按原恢复流程核对。便携目录生成在 `.release/codex-quota-scheduler/`，
+复制整个目录即可运行，目标机器需要 Node.js 22.12+，无需 `npm install`。
+运行方式、界面操作及边界见 [管理界面与运行包装](docs/MANAGEMENT.md)。
 
 ## 初始化本地管理数据
 
@@ -165,12 +191,15 @@ src/
   domain/          额度、任务、执行记录及接口
   adapters/codex/  CLI 发现、stdio RPC、真实额度读取与响应归一化
   adapters/mock/   模拟额度适配器
+  adapters/http/   本机 HTTP 协议、会话与资源适配
   config/          配置加载、校验、原子保存和恢复
   tasks/           任务文件解析、导入和版本编辑服务
   monitor/         轮询、通知唤醒、退避与纯函数刷新识别
   scheduler/       纯条件判断和串行调度服务，仅依赖领域接口
   executor/        手动执行服务、Codex 接入与回合事件处理
   recovery/        只读远端核对与本地恢复应用服务
+  management/      管理应用服务、静态页面与后台操作管理
+  runtime/         前后台生命周期、实例身份与轮转日志
   storage/         SQLite、版本迁移、任务/运行仓储和备份
   shared/          错误与校验工具
   app.ts           组合各模块

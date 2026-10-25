@@ -72,6 +72,7 @@ test("后台子进程继承明确 Node 模式，移除环境注入选项且不�
   assert.equal(child.ELECTRON_RUN_AS_NODE, "1"); assert.equal(child.NODE_OPTIONS, undefined); assert.equal(child.NODE_PATH, undefined);
   assert.equal(child.PATH, original.PATH); assert.equal(original.ELECTRON_RUN_AS_NODE, "bad");
   assert.equal(backendEnvironment(original, false).ELECTRON_RUN_AS_NODE, undefined);
+  assert.equal(backendEnvironment({ node_options: "--require malicious" }, true).node_options, undefined);
 });
 
 test("桌面自有后台连接既有 HTTP 保护，安全退出后保留数据库并释放实例", async () => {
@@ -135,5 +136,24 @@ test("桌面父进程退出使后台通过 IPC 断开执行正常落盘与退出
     if (record) await contactInstance(record, true);
     await exited;
     await rm(env.dir, { recursive: true, force: true });
+  }
+});
+
+test("已有实例身份变化时禁止状态读取与停止，不向新实例发出请求", async () => {
+  const env = await setup();
+  const attached = new DesktopBackend(env.options.configPath, env.launch);
+  let original = "";
+  try {
+    await env.backend.start(); await attached.start();
+    const path = (await import("../src/runtime/instance.js")).runtimePaths(env.options.configPath).record;
+    original = await readFile(path, "utf8");
+    const record = JSON.parse(original) as { instance: string };
+    await writeFile(path, JSON.stringify({ ...record, instance: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" }));
+    await assert.rejects(attached.status(), { code: "RUNTIME_INSTANCE_CHANGED" });
+    await assert.rejects(attached.close("wait", true), { code: "RUNTIME_INSTANCE_CHANGED" });
+    await writeFile(path, original);
+  } finally {
+    if (original) await writeFile((await import("../src/runtime/instance.js")).runtimePaths(env.options.configPath).record, original);
+    await attached.close(); await env.backend.close(); await rm(env.dir, { recursive: true, force: true });
   }
 });

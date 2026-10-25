@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { root } from "./lib/runtime-files.mjs";
 import { readInstance } from "../dist/src/runtime/instance.js";
+import { desktopDebugger } from "./lib/desktop-debugger.mjs";
 
 const args = process.argv.slice(2);
 if (args.length && (args.length !== 2 || args[0] !== "--packaged")) throw new Error("Usage: smoke-desktop.mjs [--packaged path/to/client.exe]");
@@ -28,6 +29,7 @@ let stderr = "";
 child.stderr.on("data", (chunk) => { stderr = (stderr + chunk.toString()).slice(-4000); });
 const exited = new Promise((done, reject) => { child.once("error", reject); child.once("exit", (code) => done(code)); });
 let socket;
+let controlDebugger;
 let secondary;
 const pending = new Map();
 let sequence = 0;
@@ -94,19 +96,34 @@ try {
   await writeFile(join(artifacts, "overview.png"), Buffer.from(image.data, "base64"));
   const record = await readInstance(configPath);
   assert.ok(record && record.pid !== child.pid);
+  const controlPage = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find((target) => target.url.endsWith("/startup.html"));
+  assert.ok(controlPage, "Lifecycle control page exists");
+  controlDebugger = await desktopDebugger(controlPage.webSocketDebuggerUrl);
+  assert.equal(await evaluate("typeof window.desktopLifecycle"), "undefined");
+  assert.equal(await controlDebugger.evaluate("typeof require"), "undefined");
+  await controlDebugger.evaluate("window.desktopLifecycle.command('restart')");
+  assert.equal(await controlDebugger.evaluate("window.desktopLifecycle.read().then(v => v.intent)"), "restart");
+  assert.equal((await readInstance(configPath)).pid, record.pid, "No restart before confirmation");
+  await controlDebugger.evaluate("window.desktopLifecycle.command('keep-open')");
   secondary = spawn(executable, [...prefix, "--data-dir", profile], { cwd: artifacts, env, windowsHide: true, stdio: "ignore" });
   const secondaryExit = await Promise.race([
     new Promise((done, reject) => { secondary.once("error", reject); secondary.once("exit", done); }),
-    delay(10000).then(() => { throw new Error("Second instance did not exit"); }),
+    delay(10000, undefined, { ref: false }).then(() => { throw new Error("Second instance did not exit"); }),
   ]);
   assert.equal(secondaryExit, 0);
   assert.equal((await readInstance(configPath))?.pid, record.pid);
+  await controlDebugger.evaluate("window.desktopLifecycle.command('restart')");
+  await controlDebugger.evaluate("void window.desktopLifecycle.command('wait').catch(() => {}); true");
+  try { await controlDebugger.wait(`window.desktopLifecycle.read().then(v => v.phase === 'running' && v.connection.pid !== ${record.pid})`); }
+  catch (error) { console.log(JSON.stringify(await controlDebugger.evaluate("window.desktopLifecycle.read()"))); throw error; }
+  assert.equal((await readInstance(configPath)).pid !== record.pid, true);
   await call("Page.reload");
   await wait("document.getElementById('source')?.textContent.includes('MOCK')");
   assert.equal(await evaluate("(async () => (await (await fetch('/api/tasks')).json()).some(t => t.id === 'desktop-smoke'))()"), true);
   assert.deepEqual(scriptErrors, []);
+  assert.deepEqual(controlDebugger.errors, []);
   await call("Browser.close").catch(() => {});
-  const code = await Promise.race([exited, delay(15000).then(() => { throw new Error("Desktop did not finish graceful shutdown"); })]);
+  const code = await Promise.race([exited, delay(15000, undefined, { ref: false }).then(() => { throw new Error("Desktop did not finish graceful shutdown"); })]);
   assert.equal(code, 0, stderr);
   assert.equal(await readInstance(configPath), null);
   assert.ok((await readFile(join(profile, "data/state.sqlite"))).length > 0);
@@ -115,11 +132,13 @@ try {
     assert.ok(!appFiles.some((file) => /(^|[\\/])(node_modules|tests|\.local|\.runtime|\.git)([\\/]|$)|local\.json|\.sqlite|\.log$/.test(file)));
   }
   await writeFile(join(artifacts, "result.json"), JSON.stringify({ packaged, versions, nodeOnPath: false, source: result.source,
-    initiallyPaused: result.paused, singleInstance: true, scriptErrors: scriptErrors.length, gracefulExit: true }, null, 2));
+    initiallyPaused: result.paused, singleInstance: true, controlledRestart: true, isolatedLifecycleBridge: true,
+    scriptErrors: scriptErrors.length, gracefulExit: true }, null, 2));
   console.log(JSON.stringify({ passed: true, packaged, versions, artifacts }));
 } finally {
   for (const request of pending.values()) { clearTimeout(request.timer); request.reject(new Error("Desktop debugger closed")); }
   socket?.close();
+  controlDebugger?.close();
   // Only owned test process handles are terminated if an assertion prevented normal shutdown.
   if (secondary && secondary.exitCode === null) secondary.kill();
   if (child.exitCode === null) child.kill();

@@ -1,4 +1,4 @@
-/** No page gets privileged Node or preload APIs. All mutations retain the HTTP session and CSRF checks. */
+/** Management pages have no Node bridge. The local control window adds only its fixed lifecycle protocol. */
 export const desktopWebPreferences = {
   nodeIntegration: false, nodeIntegrationInWorker: false, nodeIntegrationInSubFrames: false,
   contextIsolation: true, sandbox: true, webSecurity: true, webviewTag: false,

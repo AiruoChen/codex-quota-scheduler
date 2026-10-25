@@ -36,6 +36,7 @@ jobs:
       - run: node node_modules/electron/install.js
       - run: npm run package:desktop
       - run: node --experimental-sqlite scripts/smoke-desktop.mjs --packaged .release/desktop/CodexQuotaScheduler-win32-x64/CodexQuotaScheduler.exe
+      - run: node --experimental-sqlite scripts/smoke-lifecycle.mjs --packaged .release/desktop/CodexQuotaScheduler-win32-x64/CodexQuotaScheduler.exe
       - uses: actions/upload-artifact@v4
         with:
           name: CodexQuotaScheduler-win32-x64

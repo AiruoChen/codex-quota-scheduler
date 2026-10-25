@@ -7,9 +7,12 @@ export const root = fileURLToPath(new URL("../../", import.meta.url));
 /** Source-derived allowlist shared by CLI and desktop distributions. Never copy all of dist. */
 export async function runtimeFiles({ desktop = false } = {}) {
   const sources = await readdir(join(root, "src"), { recursive: true });
-  const files = sources.filter((path) => path.endsWith(".ts") && !path.endsWith(".d.ts")
+  const files = sources.filter((path) => /\.(?:ts|cts)$/.test(path) && !path.endsWith(".d.ts")
     && (desktop || !path.replaceAll("\\", "/").startsWith("desktop/")))
-    .flatMap((path) => [join("dist/src", path.replace(/\.ts$/, ".js")), join("dist/src", path.replace(/\.ts$/, ".js.map"))]);
+    .flatMap((path) => {
+      const emitted = path.replace(/\.(ts|cts)$/, (_match, extension) => extension === "cts" ? ".cjs" : ".js");
+      return [join("dist/src", emitted), join("dist/src", emitted + ".map")];
+    });
   files.push(...["index.html", "app.js", "style.css"].map((name) => join("dist/src/management/public", name)),
     "config/example.json", "config/codex.example.json", "examples/tasks.json", "examples/prompts/review-project.md",
     "README.md", "launch.cmd", "launch.sh");

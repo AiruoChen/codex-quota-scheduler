@@ -1,5 +1,14 @@
 :root { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; color: #1d2939; background: #f5f7fa; }
 body { margin: 0; min-height: 100vh; display: grid; place-items: center; }
-main { width: min(560px, 80vw); line-height: 1.8; }
+main { width: min(680px, 86vw); line-height: 1.8; padding: 32px 0; }
 .brand { color: #5265be; font-size: 12px; letter-spacing: .12em; }
 h1 { font-size: 28px; margin: 12px 0; }
+.activity { padding: 12px; border-radius: 8px; background: #e8edf4; }
+.actions { display: flex; flex-wrap: wrap; gap: 10px; }
+button { padding: 10px 14px; border: 1px solid #ccd5e1; border-radius: 8px; background: white; color: #263547; cursor: pointer; font: inherit; }
+button:focus-visible { outline: 3px solid #5265be; outline-offset: 2px; }
+button:disabled { opacity: .45; cursor: default; }
+button.danger { color: #a32f29; border-color: #d7a6a2; }
+[hidden] { display: none !important; }
+.hint { color: #5b6777; font-size: 13px; }
+#error { color: #a32f29; font-family: monospace; }

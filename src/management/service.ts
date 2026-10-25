@@ -6,6 +6,10 @@ import { systemClock, type Clock } from "../domain/ports.js";
 import { AppError } from "../shared/errors.js";
 import { isRecord, requireRecord, requireString } from "../shared/validation.js";
 import { parseTask } from "../tasks/load.js";
+import type { RuntimeActivity, ShutdownMode } from "../domain/lifecycle.js";
+import type { SchedulerRepository } from "../domain/scheduler.js";
+import type { ExecutionRepository } from "../storage/execution-repository.js";
+import { setTimeout as delay } from "node:timers/promises";
 
 export interface ManagementJob {
   id: number;
@@ -26,7 +30,12 @@ export class ManagementService {
   private sequence = 0;
   private changingLoop = false;
   private closing = false;
+  private closed = false;
   private closePromise: Promise<void> | undefined;
+  private settlePromise: Promise<void> | undefined;
+  private shutdownMode: ShutdownMode | null = null;
+  private schedulerRepository: SchedulerRepository | undefined;
+  private executionRepository: ExecutionRepository | undefined;
   private recoveryPromise: ReturnType<ReturnType<typeof createApp>["recovery"]> | undefined;
 
   constructor(readonly config: AppConfig, readonly configPath: string, private readonly log: RuntimeLog = () => {},
@@ -36,6 +45,8 @@ export class ManagementService {
     await this.app.taskService();
     const recovery = await this.recovery();
     const scheduler = await this.app.scheduling();
+    this.schedulerRepository = scheduler.repository;
+    this.executionRepository = (await this.app.storage()).execution;
     // Never repair a stale owner or restart dispatch as a side effect of opening the UI.
     if (!scheduler.repository.status().worker) scheduler.repository.pause("management_started");
     recovery.repository.report();
@@ -204,23 +215,38 @@ export class ManagementService {
     throw new AppError("INVALID_ARGUMENT", "未知管理操作。");
   }
 
-  /** Synchronous admission barrier; HTTP drains accepted requests before closing storage. */
-  beginShutdown(): void {
-    this.closing = true;
-    for (const work of this.works) work.controller.abort();
+  activity(): RuntimeActivity {
+    const active = this.executionRepository?.active();
+    const manual = this.works.filter((work) => work !== this.loop && work.job.state === "running");
+    const ownRun = active?.ownerPid === process.pid ? active.runId : null;
+    return { activeOperations: manual.length + (ownRun && !manual.some((work) => work.job.runId === ownRun) ? 1 : 0),
+      activeRunId: ownRun, paused: this.schedulerRepository?.status().paused ?? true };
   }
 
-  close(): Promise<void> {
-    this.beginShutdown();
+  /** Admission and dispatch stop synchronously. Waiting never aborts an active turn. */
+  beginShutdown(mode: ShutdownMode = "cancel"): void {
+    if (this.closed) return;
+    this.closing = true;
+    if (this.shutdownMode !== "cancel") this.shutdownMode = mode;
+    if (this.loop?.job.kind === "scheduler") this.schedulerRepository?.pause("runtime_stopping");
+    if (this.shutdownMode === "cancel") for (const work of this.works) work.controller.abort();
+  }
+
+  prepareStop(mode: ShutdownMode = "cancel"): Promise<void> {
+    this.beginShutdown(mode);
+    return this.settlePromise ??= (async () => {
+      await Promise.all(this.works.filter((work) => work !== this.loop).map((work) => work.done));
+      while (this.loop?.job.kind === "scheduler" && this.loop.job.state === "running" && this.activity().activeRunId) await delay(50);
+      for (const work of this.works) work.controller.abort();
+      await Promise.all(this.works.map((work) => work.done));
+    })();
+  }
+
+  close(mode: ShutdownMode = "cancel"): Promise<void> {
+    this.beginShutdown(mode);
     this.closePromise ??= (async () => {
-      try {
-        if (this.loop?.job.kind === "scheduler") (await this.app.scheduling()).repository.pause("runtime_stopping");
-      } finally {
-        for (const work of this.works) work.controller.abort();
-        await Promise.all(this.works.map((work) => work.done));
-        // A loop transition may be waiting for an old operation; it rechecks closing before launch.
-        await this.app.close();
-      }
+      try { await this.prepareStop(mode); }
+      finally { try { await this.app.close(); } finally { this.closed = true; } }
     })();
     return this.closePromise;
   }

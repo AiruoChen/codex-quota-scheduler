@@ -2,10 +2,20 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Codex 任务助手</title>
   <link rel="stylesheet" href="startup.css">
 </head>
-<body><main><p class="brand">CODEX QUOTA SCHEDULER</p><h1>正在启动客户端</h1><p>正在连接本机服务并核对数据。首次使用将创建模拟环境，队列保持暂停。</p></main></body>
+<body><main><p class="brand">CODEX QUOTA SCHEDULER · 后台服务</p>
+  <h1 id="status-title">正在连接后台</h1><p id="status-detail">正在核对本机配置与服务记录。</p>
+  <p id="activity" class="activity"></p><p id="error" role="status"></p>
+  <div class="actions">
+    <button data-command="start">启动 / 重试连接</button><button data-command="status">查询状态</button>
+    <button data-command="restart">重启自有后台</button><button data-command="stop">停止自有后台</button>
+    <button data-command="stop-external">停止外部服务…</button><button data-command="recover">核对服务记录…</button>
+    <button data-command="exit">退出客户端</button><button data-command="keep-open">保持窗口打开</button>
+    <button data-command="wait" hidden>确认 / 等待完成</button><button data-command="cancel" class="danger" hidden>请求取消并继续</button>
+  </div><p class="hint">关闭此状态窗口可返回管理界面。托盘尚未实现，后台仅在客户端或独立服务仍运行时保持工作。</p>
+</main><script type="module" src="../control-renderer.js"></script></body>
 </html>

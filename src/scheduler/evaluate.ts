@@ -12,7 +12,7 @@ export type Decision =
   | { action: "run"; taskId: string }
   | { action: "wait"; reason: "busy" | "empty_queue" | "unknown_quota" | "stale_quota" | "quota_exhausted" | "reserve_reached" };
 
-/** Pure eligibility preview. Persistence, deduplication and dispatch are later phases. */
+/** Pure eligibility preview. The scheduling service owns dispatch and persistence. */
 export function evaluateQueue(
   snapshot: QuotaSnapshot,
   tasks: readonly TaskDefinition[],

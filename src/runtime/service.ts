@@ -10,7 +10,7 @@ import { localProcesses } from "../shared/process.js";
 import { claimInstance, contactInstance, readInstance, runtimePaths } from "./instance.js";
 import { RuntimeLogger } from "./log.js";
 
-export async function runForeground(configPath: string, port: number): Promise<void> {
+export async function runForeground(configPath: string, port: number, options: { stopOnDisconnect?: boolean } = {}): Promise<void> {
   const config = await loadConfig(configPath);
   const lease = await claimInstance(configPath);
   let service: ManagementService | undefined;
@@ -18,6 +18,10 @@ export async function runForeground(configPath: string, port: number): Promise<v
   let stop!: () => void;
   const stopped = new Promise<void>((resolveStop) => { stop = resolveStop; });
   process.on("SIGINT", stop); process.on("SIGTERM", stop);
+  if (options.stopOnDisconnect) {
+    process.once("disconnect", stop);
+    if (!process.connected) stop(); // Parent may have exited while config/lease initialization was awaiting I/O.
+  }
   try {
     const logger = new RuntimeLogger(runtimePaths(configPath).log);
     service = new ManagementService(config, resolve(configPath), logger.write);
@@ -26,7 +30,10 @@ export async function runForeground(configPath: string, port: number): Promise<v
     await lease.ready(server.url);
     logger.write("runtime_started");
     console.log(JSON.stringify({ event: "runtime_ready", url: server.url, pid: process.pid }));
-    if (process.connected) { process.send?.({ event: "runtime_ready", url: server.url }); process.disconnect?.(); }
+    if (process.connected) {
+      process.send?.({ event: "runtime_ready", url: server.url });
+      if (!options.stopOnDisconnect) process.disconnect?.();
+    }
     await stopped;
     logger.write("runtime_stopping");
     await lease.stopping();
@@ -34,8 +41,9 @@ export async function runForeground(configPath: string, port: number): Promise<v
     logger.write("runtime_stopped");
   } finally {
     process.removeListener("SIGINT", stop); process.removeListener("SIGTERM", stop);
+    process.removeListener("disconnect", stop);
     try { if (server) await server.close(); else await service?.close(); }
-    finally { await lease.release(); }
+    finally { await lease.release(); if (options.stopOnDisconnect && process.connected) process.disconnect?.(); }
   }
 }
 

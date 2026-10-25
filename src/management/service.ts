@@ -2,7 +2,6 @@ import { dirname, resolve } from "node:path";
 import { createApp } from "../app.js";
 import type { AppConfig } from "../config/load.js";
 import { ConfigManager } from "../config/manage.js";
-import { evaluateQuota } from "../domain/quota-policy.js";
 import { systemClock, type Clock } from "../domain/ports.js";
 import { AppError } from "../shared/errors.js";
 import { isRecord, requireRecord, requireString } from "../shared/validation.js";
@@ -51,12 +50,10 @@ export class ManagementService {
 
   async state() {
     const monitor = await this.app.monitoring();
+    // The repository preserves identity, window-history and freshness safeguards.
     const saved = monitor.repository.status();
-    const availability = !saved || saved.errorCode || !saved.snapshot
-      ? { status: "unknown", reason: saved?.errorCode ? "read_failed" : "unknown_quota" }
-      : evaluateQuota(saved.snapshot, this.config, this.clock.now());
     return { provider: this.config.provider, closing: this.closing, now: this.clock.now().toISOString(),
-      monitor: saved ? { ...saved, availability } : null,
+      monitor: saved,
       events: monitor.repository.events().slice(-30),
       scheduler: (await this.app.scheduling()).repository.status(),
       recovery: (await this.recovery()).repository.report(),
@@ -76,11 +73,17 @@ export class ManagementService {
     // A UI prompt lives exclusively in SQLite. This provenance path is never read or written.
     const task = parseTask({ ...definition, promptFile: definition.promptFile ?? resolve(dirname(this.configPath), "../.local/ui-prompts", encodeURIComponent(id) + ".md") }, dirname(this.configPath));
     const store = await this.app.storage();
+    this.ensureOpen();
     return data.revision === undefined ? store.tasks.create(task, prompt) : store.tasks.update(task, prompt, revision(data.revision));
   }
 
   private launch(kind: string, action: (signal: AbortSignal, started: (id: string) => void) => Promise<unknown>): Work {
     this.ensureOpen();
+    // Check and register without an await between them: setup may have yielded to another request.
+    const isManual = (operation: string) => operation !== "monitor" && operation !== "scheduler";
+    if (isManual(kind) && this.works.some((work) => work.job.state === "running" && isManual(work.job.kind))) {
+      throw new AppError("MANAGEMENT_BUSY", "已有手动操作正在进行，请等待完成。");
+    }
     // Keep a bounded operation list. Running operations are never evicted.
     while (this.works.length >= 30) {
       const index = this.works.findIndex((work) => work.job.state !== "running");
@@ -156,6 +159,7 @@ export class ManagementService {
     const data = requireRecord(input, "请求");
     const store = await this.app.storage();
     const scheduler = (await this.app.scheduling()).repository;
+    this.ensureOpen();
     if (action === "task-save") return this.saveTask(data);
     if (action === "task-delete") { await store.tasks.remove(requireString(data.id, "id"), revision(data.revision)); return { archived: true }; }
     if (action === "enqueue") return scheduler.enqueue(requireString(data.id, "id"));
@@ -174,7 +178,6 @@ export class ManagementService {
     if (["run", "run-start", "inspect", "reconcile"].includes(action)) {
       this.requireReal();
       const id = requireString(data.id, "id");
-      if (this.works.some((work) => work.job.state === "running" && !["monitor", "scheduler"].includes(work.job.kind))) throw new AppError("MANAGEMENT_BUSY", "已有手动操作正在进行，请等待完成。");
       const execution = await this.app.execution();
       const recovery = await this.recovery();
       return { ...this.launch(action, async (signal, started) => {
@@ -189,7 +192,9 @@ export class ManagementService {
     }
     if (action === "repair") {
       if (data.confirm !== true) throw new AppError("CONFIRM_REQUIRED", "修复需要明确确认。");
-      return (await this.recovery()).repository.repair();
+      const recovery = await this.recovery();
+      this.ensureOpen();
+      return recovery.repository.repair();
     }
     if (action === "config-set") {
       if (this.works.some((work) => work.job.state === "running" && work.job.kind !== "monitor")) throw new AppError("MANAGEMENT_BUSY", "请先停止调度并等待执行或核对结束，再修改配置。");
@@ -199,9 +204,15 @@ export class ManagementService {
     throw new AppError("INVALID_ARGUMENT", "未知管理操作。");
   }
 
+  /** Synchronous admission barrier; HTTP drains accepted requests before closing storage. */
+  beginShutdown(): void {
+    this.closing = true;
+    for (const work of this.works) work.controller.abort();
+  }
+
   close(): Promise<void> {
+    this.beginShutdown();
     this.closePromise ??= (async () => {
-      this.closing = true;
       try {
         if (this.loop?.job.kind === "scheduler") (await this.app.scheduling()).repository.pause("runtime_stopping");
       } finally {

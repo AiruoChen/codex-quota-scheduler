@@ -5,7 +5,15 @@ const reasons = { management_started: "服务启动后保持暂停", worker_star
 const events = { baseline: "已建立监控基线", identity_changed: "账户身份变化", clock_changed: "检测到时钟变化", quota_reset: "已确认额度窗口刷新", availability_changed: "额度可用状态变化", read_error: "额度查询失败", read_recovered: "额度查询已恢复" };
 let csrf = "", state, view = "overview", editing = null, runId = null, offset = 0, configData, lastRunDetail;
 let initialized = false, inFlight = false;
+let runsRequest = 0, detailRequest = 0;
 const seenJobs = new Map();
+const busyButtons = new WeakSet();
+const disabledButtons = new WeakMap();
+
+function setDisabled(node, disabled) {
+  disabledButtons.set(node, disabled);
+  node.disabled = disabled || busyButtons.has(node);
+}
 
 // Dynamic content always uses text nodes, including prompts, output and remote messages.
 function el(tag, attrs = {}, ...children) {
@@ -36,9 +44,14 @@ function notice(message, error = false) {
   $("notice").hidden = false;
 }
 async function busy(node, fn) {
+  if (busyButtons.has(node)) return;
+  busyButtons.add(node);
   node.disabled = true;
   try { await fn(); } catch (error) { notice(error.message, true); }
-  finally { node.disabled = false; }
+  finally {
+    busyButtons.delete(node);
+    node.disabled = disabledButtons.get(node) ?? false;
+  }
 }
 async function act(action, data = {}, message) {
   const result = await api("/api/action", { action, ...data });
@@ -46,7 +59,7 @@ async function act(action, data = {}, message) {
   await refresh();
   return result;
 }
-function realButton(node) { node.disabled = state?.provider !== "codex"; if (node.disabled) node.title = "模拟模式不提交真实任务，请先修改 provider 并重启服务"; return node; }
+function realButton(node) { setDisabled(node, state?.provider !== "codex"); if (node.disabled) node.title = "模拟模式不提交真实任务，请先修改 provider 并重启服务"; return node; }
 
 function renderState() {
   const real = state.provider === "codex";
@@ -77,8 +90,8 @@ function renderState() {
   $("trigger-mode").textContent = scheduler.worker ? (scheduler.worker.trigger === "refresh" ? "确认刷新后触发" : "额度可用时触发") : "启动后仍需恢复队列";
   document.querySelectorAll("[data-action]").forEach((node) => {
     const action = node.dataset.action;
-    node.disabled = state.closing || (["resume", "scheduler-start"].includes(action) && !real)
-      || (action === "monitor-start" && state.loop === "scheduler");
+    setDisabled(node, state.closing || (["resume", "scheduler-start"].includes(action) && !real)
+      || (action === "monitor-start" && state.loop === "scheduler"));
   });
   const queue = scheduler.queue.filter((item) => ["queued", "waiting_quota", "running", "needs_attention"].includes(item.status));
   $("queue").replaceChildren(...(queue.length ? queue.map((item) => el("div", { class: "queue-item" }, el("div", {}, el("strong", {}, item.taskId), el("small", {}, `版本 ${item.revision} · 优先级 ${item.priority}`)), el("div", { class: "actions" }, badge(item.status), button("查看", () => openRun(item.runId)), ...(["queued", "waiting_quota"].includes(item.status) ? [button("移除", () => act("remove", { id: item.runId }, "已移除尚未提交的队列记录。"), "quiet")] : [])))) : [empty("队列为空。在任务管理中选择“加入队列”即可保存运行快照。") ]));
@@ -105,10 +118,12 @@ async function loadTasks() {
     el("td", {}, el("div", { class: "actions" }, button("编辑", () => openTask(task.id)), button("加入队列", () => act("enqueue", { id: task.id }, "已保存此版本的队列快照。队列暂停时不会派发。")), realButton(button("执行", () => confirmAction("run", task.id, `现在手动执行“${task.name}”？执行将检查真实账户与额度。`))), button("归档", async () => { if (confirm(`归档“${task.name}”？历史记录会保留。`)) { await act("task-delete", { id: task.id, revision: task.revision }, "任务已归档。尚未派发的记录不会执行。"); } }, "quiet"))))));
 }
 async function loadRuns() {
+  const request = ++runsRequest;
   const runs = await api(`/api/runs?offset=${offset}`);
+  if (request !== runsRequest) return;
   $("runs-page").textContent = `第 ${offset / 50 + 1} 页`;
-  $("runs-prev").disabled = offset === 0;
-  $("runs-next").disabled = runs.length < 50;
+  setDisabled($("runs-prev"), offset === 0);
+  setDisabled($("runs-next"), runs.length < 50);
   $("runs-empty").hidden = runs.length > 0;
   $("run-rows").replaceChildren(...runs.map((run) => el("tr", {}, el("td", {}, el("strong", {}, run.name), el("small", { title: run.id }, run.id)), el("td", {}, badge(run.status)), el("td", {}, `v${run.taskRevision}`), el("td", { class: "subtle" }, time(run.createdAt)), el("td", {}, button("查看详情", () => openRun(run.id))))));
 }
@@ -148,11 +163,14 @@ $("task-form").addEventListener("submit", async (event) => {
 async function openRun(id) {
   runId = id;
   await renderRun();
+  if (runId !== id) return;
   if (!$("run-dialog").open) $("run-dialog").showModal();
 }
 async function renderRun() {
   if (!runId) return;
+  const request = ++detailRequest;
   const detail = await api(`/api/run?id=${encodeURIComponent(runId)}`);
+  if (request !== detailRequest) return;
   const serialized = JSON.stringify(detail);
   if (lastRunDetail === serialized) return;
   lastRunDetail = serialized;

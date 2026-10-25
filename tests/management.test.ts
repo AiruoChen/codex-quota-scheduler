@@ -8,6 +8,7 @@ import test from "node:test";
 import { loadConfig } from "../src/config/load.js";
 import type { TaskRun } from "../src/domain/task.js";
 import type { Clock } from "../src/domain/ports.js";
+import type { QuotaSnapshot } from "../src/domain/quota.js";
 import { ManagementService } from "../src/management/service.js";
 import { serveManagement } from "../src/adapters/http/management-server.js";
 import { RuntimeLogger } from "../src/runtime/log.js";
@@ -46,6 +47,71 @@ async function until(predicate: () => Promise<boolean>) {
   for (let index = 0; index < 120; index++) { if (await predicate()) return; await delay(50); }
   throw new Error("Timed out waiting for management operation");
 }
+
+test("管理状态保留缺失窗口、回退边界及未知账户的保守判断", async () => {
+  const now = new Date("2026-10-22T00:00:00Z");
+  const env = await setup("mock", "success", { now: () => now });
+  try {
+    await env.service.loopAction("monitor-stop");
+    const repository = (await env.service.app.monitoring()).repository;
+    const baseline: QuotaSnapshot = { source: "mock", fetchedAt: now.toISOString(), buckets: [{
+      id: "codex", name: null, planType: null, reachedType: null, windows: [
+        { slot: "primary", durationMinutes: 300, usedPercent: 10, remainingPercent: 90, resetsAt: "2026-10-22T05:00:00Z" },
+        { slot: "secondary", durationMinutes: 10080, usedPercent: 20, remainingPercent: 80, resetsAt: "2026-10-29T00:00:00Z" },
+      ],
+    }] };
+    for (const reason of ["missing_window", "unknown_quota", "identity_unknown"] as const) {
+      repository.record({ snapshot: baseline });
+      const snapshot = structuredClone(baseline);
+      if (reason === "missing_window") snapshot.buckets[0]!.windows.pop();
+      if (reason === "unknown_quota") snapshot.buckets[0]!.windows[0]!.resetsAt = "2026-10-22T04:00:00Z";
+      if (reason === "identity_unknown") snapshot.source = "codex";
+      repository.record({ snapshot });
+      assert.deepEqual(repository.status()?.availability, { status: "unknown", reason });
+      assert.deepEqual((await env.service.state()).monitor?.availability, { status: "unknown", reason });
+    }
+  } finally { await env.cleanup(); }
+});
+
+test("同一时刻的两个手动请求只登记一个后台操作", async () => {
+  const env = await setup("codex", "hang");
+  try {
+    await env.task();
+    const results = await Promise.allSettled([
+      env.service.action("run", { id: "one" }), env.service.action("run", { id: "one" }),
+    ]);
+    assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
+    const rejected = results.find((result) => result.status === "rejected");
+    assert.ok(rejected?.status === "rejected");
+    assert.equal((rejected.reason as { code: string }).code, "MANAGEMENT_BUSY");
+    assert.equal((await env.service.state()).jobs.filter((job) => job.kind === "run").length, 1);
+  } finally { await env.cleanup(); }
+});
+
+test("停止服务期间拒绝已接收但尚未读完的写入请求", async () => {
+  const env = await setup();
+  let pending: ReturnType<typeof request> | undefined;
+  try {
+    const body = JSON.stringify({ action: "task-save", definition: { id: "late", name: "Late", enabled: true,
+      projectDir: env.dir, priority: 1, session: { mode: "new" } }, prompt: "fixture-only" });
+    const response = new Promise<number>((resolveStatus, reject) => {
+      pending = request(env.server.url + "/api/action", { method: "POST", headers: {
+        cookie: env.cookie, "Content-Type": "application/json", "X-CSRF-Token": env.csrf,
+        "Content-Length": Buffer.byteLength(body),
+      } }, (res) => { res.resume(); resolveStatus(res.statusCode!); });
+      pending.once("error", reject);
+      pending.write(body.slice(0, -1));
+    });
+    // A completed request on the same server confirms it is servicing connections.
+    await env.get("/api/state");
+    const closing = env.server.close();
+    pending!.end(body.slice(-1));
+    assert.equal(await response, 409);
+    await closing;
+    const store = new SqliteStore(env.config.storage.databasePath);
+    try { assert.equal(await store.tasks.get("late"), null); } finally { store.close(); }
+  } finally { pending?.destroy(); await env.cleanup(); }
+});
 
 test("HTTP 仅允许本机 Host、同源会话和 CSRF；静态资源不暴露本地文件", async () => {
   const env = await setup();

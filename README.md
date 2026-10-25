@@ -25,6 +25,10 @@ Windows PowerShell 若限制执行 npm.ps1，请使用上面的 npm.cmd；其他
 
 ## 本地管理界面
 
+已提供最小 Windows 桌面客户端：开发运行 `npm.cmd run desktop`，便携打包 `npm.cmd run package:desktop`。
+便携目录自带运行时，双击 `CodexQuotaScheduler.exe` 即可运行；默认空任务模拟环境，关闭窗口会安全退出自有后台。
+使用方法和当前边界见 [桌面客户端](docs/DESKTOP.md)，选型见 [技术决策](docs/DESKTOP-TECH-DECISION.md)。
+
 ```powershell
 npm.cmd run ui
 ```
@@ -189,17 +193,18 @@ npm.cmd start -- status --config config/codex.example.json
 ```text
 src/
   domain/          额度、任务、执行记录及接口
-  adapters/codex/  CLI 发现、stdio RPC、真实额度读取与响应归一化
+  adapters/codex/  CLI、stdio RPC、真实额度、执行回合和只读恢复协议
   adapters/mock/   模拟额度适配器
   adapters/http/   本机 HTTP 协议、会话与资源适配
   config/          配置加载、校验、原子保存和恢复
   tasks/           任务文件解析、导入和版本编辑服务
   monitor/         轮询、通知唤醒、退避与纯函数刷新识别
   scheduler/       纯条件判断和串行调度服务，仅依赖领域接口
-  executor/        手动执行服务、Codex 接入与回合事件处理
+  executor/        手动执行编排、执行权、取消与结果持久化
   recovery/        只读远端核对与本地恢复应用服务
   management/      管理应用服务、静态页面与后台操作管理
   runtime/         前后台生命周期、实例身份与轮转日志
+  desktop/         Electron 窗口、独立用户数据、后台连接与安全退出
   storage/         SQLite、版本迁移、任务/运行仓储和备份
   shared/          错误与校验工具
   app.ts           组合各模块
@@ -208,16 +213,20 @@ tests/             额度、调度、配置与模拟流程测试
 docs/              需求、架构和分阶段开发路线
 ```
 
-框架没有生产环境运行时依赖，开发依赖通过 `package-lock.json` 固定。
+业务后端没有第三方 npm 运行依赖；桌面便携包包含 Electron 运行时，开发依赖通过 `package-lock.json` 固定。
 持续集成会在 Windows 和 Linux 的 Node.js 22 环境运行类型检查、测试和模拟演示。
+`npm run check` 同时检查浏览器/工具 JavaScript 语法，以及领域层和调度器的依赖边界。
+便携包按当前源码清单复制编译结果，排除遗留编译文件及输出目录中的额外文件。
+代码审查范围、修复和验证边界见 [代码审查记录](docs/CODE-REVIEW.md)。
 
 ## 开发顺序
 
-下一块是 **长期运行与管理界面**，具体任务与验收见 [开发路线](docs/ROADMAP.md)。
+下一块是 **系统集成**（原生通知、托盘及可选开机启动），具体任务与验收见 [开发路线](docs/ROADMAP.md)。
+桌面客户端的页面设计、安装部署、数据迁移与分块验收草案见 [桌面客户端需求](docs/DESKTOP-CLIENT-REQUIREMENTS.md)；最小外壳与便携目录已实现，安装器和托盘待开发。
 整体职责与数据流见 [架构说明](docs/ARCHITECTURE.md)，产品边界见 [需求清单](docs/REQUIREMENTS.md)。
 
 异常检测、显式本地修复与准确回合结果核对已接通；证据不足的记录继续保留 needs_attention。
-恢复不会自动重发或恢复派发；后台服务和管理界面尚未实现。
+恢复不会自动重发或恢复派发；后台服务和管理界面已实现，服务重启后队列保持暂停。
 
 ## 接口依据
 

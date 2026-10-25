@@ -3,6 +3,7 @@ import { mkdir, open, readFile, rename, unlink } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { localProcesses } from "../shared/process.js";
 import { AppError } from "../shared/errors.js";
+import { isRecord } from "../shared/validation.js";
 
 export interface RuntimeRecord {
   version: 1;
@@ -38,6 +39,29 @@ export async function readInstance(configPath: string): Promise<RuntimeRecord | 
 }
 
 export async function claimInstance(configPath: string) {
+  return mutateInstance(configPath, () => claimUnlocked(configPath));
+}
+
+/** Serialize every cooperating writer, including recovery's check-and-delete sequence. */
+async function mutateInstance<T>(configPath: string, action: () => Promise<T>): Promise<T> {
+  const paths = runtimePaths(configPath);
+  await mkdir(paths.directory, { recursive: true });
+  const lockPath = paths.record + ".lock";
+  let lock;
+  try { lock = await open(lockPath, "wx", 0o600); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+      throw new AppError("RUNTIME_BUSY", "实例记录正在变更；若进程异常退出，请确认所有相关进程已退出后人工清理 instance.json.lock。");
+    }
+    throw error;
+  }
+  try {
+    await lock.writeFile(JSON.stringify({ pid: process.pid }));
+    return await action();
+  } finally { await lock.close(); await unlink(lockPath); }
+}
+
+async function claimUnlocked(configPath: string) {
   const paths = runtimePaths(configPath);
   await mkdir(paths.directory, { recursive: true });
   let handle: Awaited<ReturnType<typeof open>>;
@@ -52,21 +76,31 @@ export async function claimInstance(configPath: string) {
   catch (error) { await handle.close(); await unlink(paths.record); throw error; }
   await handle.close();
   async function save() {
-    const temporary = `${paths.record}.${record.instance}.tmp`;
-    const file = await open(temporary, "wx", 0o600);
-    try {
-      try { await file.writeFile(JSON.stringify(record)); await file.sync(); } finally { await file.close(); }
-      await rename(temporary, paths.record);
-    } finally { await unlink(temporary).catch(() => {}); }
+    return mutateInstance(configPath, async () => {
+      const current = await readInstance(configPath);
+      if (current?.instance !== record.instance) throw new AppError("RUNTIME_BUSY", "实例记录已变化，不会覆盖其他服务。");
+      const temporary = `${paths.record}.${record.instance}.tmp`;
+      const file = await open(temporary, "wx", 0o600);
+      try {
+        try { await file.writeFile(JSON.stringify(record)); await file.sync(); } finally { await file.close(); }
+        await rename(temporary, paths.record);
+      } finally { await unlink(temporary).catch(() => {}); }
+    });
   }
   return { record, async ready(url: string) { record.url = url; record.state = "ready"; await save(); },
     async stopping() { record.state = "stopping"; await save(); }, async release() {
-    const current = await readInstance(configPath);
-    if (current?.instance === record.instance) await unlink(paths.record);
+    await mutateInstance(configPath, async () => {
+      const current = await readInstance(configPath);
+      if (current?.instance === record.instance) await unlink(paths.record);
+    });
   } };
 }
 
 export async function recoverInstance(configPath: string) {
+  return mutateInstance(configPath, () => recoverUnlocked(configPath));
+}
+
+async function recoverUnlocked(configPath: string) {
   const record = await readInstance(configPath);
   if (!record) return { recovered: false };
   if (localProcesses.inspect(record.pid) !== "dead") throw new AppError("RUNTIME_BUSY", "进程仍存在或无法确认退出，不会删除运行记录。");
@@ -79,10 +113,16 @@ export async function recoverInstance(configPath: string) {
 
 export async function contactInstance(record: RuntimeRecord, stop = false) {
   if (!record.url) throw new AppError("RUNTIME_STARTING", "服务尚未就绪，请稍后查询状态。");
+  // Verify the responder before submitting a stop to a potentially reused local port.
+  if (stop) await contactInstance(record);
   const response = await fetch(record.url + (stop ? "/api/runtime/stop" : "/api/runtime"), {
     method: stop ? "POST" : "GET", signal: AbortSignal.timeout(3000), redirect: "error",
     headers: { Authorization: `Bearer ${record.token}`, "X-Runtime-Instance": record.instance },
   });
   if (!response.ok) throw new AppError("RUNTIME_UNREACHABLE", "无法验证此运行实例，不会向未知进程发送停止命令。");
-  return await response.json() as unknown;
+  const result: unknown = await response.json();
+  if (!isRecord(result) || result.instance !== record.instance || result.pid !== record.pid || typeof result.stopping !== "boolean") {
+    throw new AppError("RUNTIME_UNREACHABLE", "响应身份与运行记录不匹配，不会信任该服务状态。");
+  }
+  return result;
 }

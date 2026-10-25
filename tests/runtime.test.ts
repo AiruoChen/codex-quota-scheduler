@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { createServer } from "node:http";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
-import { claimInstance, readInstance, recoverInstance, runtimePaths } from "../src/runtime/instance.js";
+import { claimInstance, contactInstance, readInstance, recoverInstance, runtimePaths } from "../src/runtime/instance.js";
 
 const cli = resolve("dist/src/cli.js");
 function command(configPath: string, ...args: string[]) {
@@ -20,6 +21,44 @@ async function setup() {
     reservePercent: 10, limitId: "codex", tasksFile: "../tasks.json", storage: { databasePath: "../state.sqlite" } }));
   return { dir, configPath };
 }
+
+test("实例变更锁覆盖启动、保存、释放和恢复，锁存在时不修改记录", async () => {
+  const env = await setup();
+  const lease = await claimInstance(env.configPath);
+  const lockPath = runtimePaths(env.configPath).record + ".lock";
+  try {
+    await writeFile(lockPath, JSON.stringify({ pid: process.pid }));
+    const before = await readFile(runtimePaths(env.configPath).record, "utf8");
+    for (const action of [() => claimInstance(env.configPath), () => lease.ready("http://127.0.0.1:1234"),
+      () => lease.release(), () => recoverInstance(env.configPath)]) {
+      await assert.rejects(action(), { code: "RUNTIME_BUSY" });
+      assert.equal(await readFile(runtimePaths(env.configPath).record, "utf8"), before);
+    }
+  } finally { await rm(lockPath, { force: true }); await lease.release(); await rm(env.dir, { recursive: true, force: true }); }
+});
+
+test("端口返回其他实例身份时拒绝状态，并且不发送停止 POST", async () => {
+  const env = await setup();
+  const lease = await claimInstance(env.configPath);
+  const methods: string[] = [];
+  const server = createServer((req, res) => {
+    methods.push(req.method!);
+    res.setHeader("Content-Type", "application/json");
+    res.end(JSON.stringify({ instance: "other-instance", pid: process.pid, stopping: false }));
+  });
+  try {
+    await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+    const address = server.address();
+    assert.ok(address && typeof address !== "string");
+    await lease.ready(`http://127.0.0.1:${address.port}`);
+    await assert.rejects(contactInstance(lease.record), { code: "RUNTIME_UNREACHABLE" });
+    await assert.rejects(contactInstance(lease.record, true), { code: "RUNTIME_UNREACHABLE" });
+    assert.deepEqual(methods, ["GET", "GET"]);
+  } finally {
+    await new Promise<void>((done, reject) => server.close((error) => error ? reject(error) : done()));
+    await lease.release(); await rm(env.dir, { recursive: true, force: true });
+  }
+});
 
 test("后台 CLI 可重复查询与启动，验证实例后停止；重启保留数据库和暂停状态", async () => {
   const env = await setup();
@@ -109,10 +148,16 @@ test("端口占用启动失败时清理自己的服务记录，不影响正在�
 });
 
 test("便携包装只包含运行所需文件，无运行依赖；在其他工作目录运行 demo 和 UI", async () => {
-  execFileSync(process.execPath, ["scripts/package.mjs"], { stdio: ["pipe", "pipe", "pipe"] });
+  const orphan = resolve("dist/src/obsolete-review-sentinel.js");
+  const secret = resolve("dist/src/private-review-sentinel.json");
+  await writeFile(orphan, "// deleted source artifact");
+  await writeFile(secret, '{"fixture":"must-not-package"}');
+  try { execFileSync(process.execPath, ["scripts/package.mjs"], { stdio: ["pipe", "pipe", "pipe"] }); }
+  finally { await rm(orphan); await rm(secret); }
   const packaged = resolve(".release/codex-quota-scheduler");
   const files = (await readdir(packaged, { recursive: true })).map((file) => file.replaceAll("\\", "/"));
   assert.ok(files.includes("dist/src/management/public/index.html"));
+  assert.ok(!files.some((file) => file.includes("review-sentinel")));
   assert.ok(!files.some((file) => /(^|\/)(node_modules|\.local|\.runtime|\.git)(\/|$)|local\.json|\.sqlite|\.log$/.test(file)));
   const metadata = JSON.parse(await readFile(join(packaged, "package.json"), "utf8")) as { dependencies?: unknown; devDependencies?: unknown };
   assert.equal(metadata.dependencies, undefined); assert.equal(metadata.devDependencies, undefined);

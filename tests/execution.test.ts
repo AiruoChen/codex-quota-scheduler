@@ -54,6 +54,8 @@ for (const [scenario, status] of [
   ["failure", "failed"], ["approval", "needs_attention"], ["input", "needs_attention"],
   ["disconnect", "needs_attention"], ["lost-submission", "needs_attention"], ["quota-wait", "waiting_quota"],
   ["account-change", "failed"],
+  ["unknown-start-status", "needs_attention"], ["unknown-terminal-status", "needs_attention"],
+  ["large-completed-output", "needs_attention"], ["hidden-delta-output", "needs_attention"],
 ] as const) {
   test(`${scenario}: 保存 ${status}，不误报成功或泄露原始错误`, async () => {
     const env = await setup(scenario);
@@ -61,6 +63,14 @@ for (const [scenario, status] of [
       const run = await env.service.runTask("one", new AbortController().signal);
       assert.equal(run.status, status);
       assert.ok(!JSON.stringify(run).includes("private-debug-secret"));
+      if (scenario.startsWith("unknown-")) {
+        assert.match(run.error!, /CODEX_TURN_STATUS_UNKNOWN/);
+        await assert.rejects(env.service.start(run.id, new AbortController().signal), { code: "RUN_ALREADY_STARTED" });
+      }
+      if (scenario.endsWith("-output")) {
+        assert.match(run.error!, /EXECUTION_REVIEW_REQUIRED/);
+        assert.ok(Buffer.byteLength(run.output) <= 1024 * 1024);
+      }
       if (["quota-wait", "account-change"].includes(scenario)) {
         assert.ok(!env.store.execution.events(run.id).some((event) => event.type === "submission_started"));
       }

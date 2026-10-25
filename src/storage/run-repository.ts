@@ -37,10 +37,11 @@ export class SqliteRunRepository implements RunRepository {
   }
 
   /** Used by the execution repository inside its atomic create-and-claim transaction. */
-  insert(taskId: string): TaskRun {
+  insert(taskId: string, expectedRevision?: number): TaskRun {
     const row = this.db.connection.prepare("SELECT * FROM tasks WHERE id=? AND deleted_at IS NULL").get(taskId);
     if (!row) throw new AppError("TASK_NOT_FOUND", "任务不存在或已归档。");
     const task = readStoredTask(row);
+    if (expectedRevision !== undefined && task.revision !== expectedRevision) throw new AppError("TASK_CONFLICT", "任务版本已变化，请重新预览。");
     const run: TaskRun = {
       id: randomUUID(), taskId, taskRevision: task.revision, taskSnapshot: definitionOf(task),
       promptSnapshot: task.promptSnapshot, promptHash: task.promptHash,

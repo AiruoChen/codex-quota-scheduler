@@ -8,6 +8,7 @@ import { desktopWebPreferences, isAbortedNavigation, isManagementNavigation } fr
 import { recoverInstance } from "../runtime/instance.js";
 import { AppError } from "../shared/errors.js";
 import { registerLifecycleControl } from "../adapters/electron/lifecycle-ipc.js";
+import { registerProjectDirectory } from "../adapters/electron/project-directory.js";
 import type { LifecycleCommand, LifecycleIntent, LifecycleState, LifecycleView, ShutdownMode } from "../domain/lifecycle.js";
 
 app.setName("CodexQuotaScheduler");
@@ -157,7 +158,8 @@ async function main() {
   desktopSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   desktopSession.setPermissionCheckHandler(() => false);
   window = new BrowserWindow({ title: "Codex 任务助手", width: 1200, height: 800, minWidth: 960, minHeight: 640,
-    backgroundColor: "#f5f7fa", show: false, webPreferences: { ...desktopWebPreferences, session: desktopSession } });
+    backgroundColor: "#f5f7fa", show: false, webPreferences: { ...desktopWebPreferences, session: desktopSession,
+      preload: fileURLToPath(new URL("./project-preload.cjs", import.meta.url)) } });
   control = new BrowserWindow({ title: "后台服务管理", width: 820, height: 680, minWidth: 720, minHeight: 580, show: false,
     webPreferences: { ...desktopWebPreferences, preload: fileURLToPath(new URL("./control-preload.cjs", import.meta.url)), session: desktopSession } });
   for (const target of [window, control]) {
@@ -178,6 +180,7 @@ async function main() {
     else void requestExit().catch(report);
   });
   registerLifecycleControl(control, controlPage.href, { view, command, failed: report });
+  registerProjectDirectory(window, () => lifecycle.snapshot().phase === "running" ? lifecycle.snapshot().connection?.url ?? null : null);
   const invoke = (action: LifecycleCommand) => { void command(action).catch(report); };
   Menu.setApplicationMenu(Menu.buildFromTemplate([{ label: "后台服务", submenu: [
     { label: "服务状态…", click: showControl }, { label: "重新连接 / 启动", click: () => invoke("start") },

@@ -18,8 +18,8 @@ export class ExecutionRepository {
     return this.db.transaction(() => this.claimInside(id));
   }
 
-  claimNew(taskId: string): TaskRun {
-    return this.db.transaction(() => this.claimInside(new SqliteRunRepository(this.db, this.clock).insert(taskId).id));
+  claimNew(taskId: string, expectedRevision?: number): TaskRun {
+    return this.db.transaction(() => this.claimInside(new SqliteRunRepository(this.db, this.clock).insert(taskId, expectedRevision).id));
   }
 
   /** Only call inside a synchronous database transaction. */

@@ -376,3 +376,21 @@ test("浏览器只建立连接而不发请求时，服务仍可在排空后安�
     await Promise.race([env.server.close("wait"), delay(2000, undefined, { ref: false }).then(() => { throw new Error("Idle preconnect blocked shutdown"); })]);
   } finally { socket.destroy(); await env.cleanup(); }
 });
+
+test("任务启停与入队均检查 revision，页面分页不暴露指令", async () => {
+  const env = await setup();
+  try {
+    await env.task("private page prompt");
+    const page = await env.get("/api/tasks/page?search=One&enabled=enabled&limit=1");
+    assert.equal(page.total, 1); assert.ok(!JSON.stringify(page).includes("private page prompt"));
+    assert.equal((await env.action("task-enable", { id: "one", revision: 1, enabled: false })).status, 200);
+    assert.equal((await env.action("task-enable", { id: "one", revision: 1, enabled: true })).status, 409);
+    assert.equal((await env.action("enqueue", { id: "one", revision: 1 })).status, 409);
+    assert.equal((await env.action("enqueue", { id: "one", revision: 2 })).status, 400);
+    assert.equal((await env.action("task-enable", { id: "one", revision: 2, enabled: true })).status, 200);
+    const queued = await (await env.action("enqueue", { id: "one", revision: 3 })).json() as TaskRun;
+    assert.equal(queued.taskRevision, 3); assert.equal(queued.promptSnapshot, "private page prompt");
+    assert.equal((await env.get("/api/tasks/page?enabled=disabled")).total, 0);
+    assert.equal((await fetch(env.server.url + "/api/tasks/page?offset=-1", { headers: { cookie: env.cookie } })).status, 400);
+  } finally { await env.cleanup(); }
+});

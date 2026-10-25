@@ -14,9 +14,9 @@ export class ManualExecutionService {
     this.executor = executor ?? new CodexExecutor(config, clock);
   }
 
-  async runTask(taskId: string, signal: AbortSignal, started?: (id: string) => void): Promise<TaskRun> {
+  async runTask(taskId: string, signal: AbortSignal, started?: (id: string) => void, expectedRevision?: number): Promise<TaskRun> {
     this.requireReal();
-    return this.executeClaimed(this.store.execution.claimNew(taskId).id, signal, started);
+    return this.executeClaimed(this.store.execution.claimNew(taskId, expectedRevision).id, signal, started);
   }
 
   async start(id: string, signal: AbortSignal, started?: (id: string) => void): Promise<TaskRun> {

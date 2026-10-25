@@ -24,7 +24,7 @@ function monitor(): MonitorState {
 function state(): ManagementState {
   const saved = monitor();
   return { provider: "codex", closing: false, now: new Date(epoch).toISOString(), monitor: saved, quota: quotaDisplay(saved, policy, new Date(epoch)), currentRun: null,
-    events: [], jobs: [], loop: "monitor", scheduler: { paused: true, reason: null, worker: null, attention: [], queue: [] }, recovery: { checkedAt: new Date(epoch).toISOString(), issues: [], owners: [] } };
+    events: [], jobs: [], loop: "monitor", dispatch: null, scheduler: { paused: true, reason: null, worker: null, attention: [], queue: [] }, recovery: { checkedAt: new Date(epoch).toISOString(), issues: [], owners: [] } };
 }
 
 test("GUI 展示所有服务端窗口及任意时长，0% 保留为耗尽而非未知，账户默认脱敏", () => {

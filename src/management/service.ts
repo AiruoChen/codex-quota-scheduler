@@ -10,6 +10,7 @@ import type { RuntimeActivity, ShutdownMode } from "../domain/lifecycle.js";
 import type { SchedulerRepository } from "../domain/scheduler.js";
 import type { ExecutionRepository } from "../storage/execution-repository.js";
 import { setTimeout as delay } from "node:timers/promises";
+import { quotaDisplay } from "./quota-display.js";
 
 export interface ManagementJob {
   id: number;
@@ -63,8 +64,13 @@ export class ManagementService {
     const monitor = await this.app.monitoring();
     // The repository preserves identity, window-history and freshness safeguards.
     const saved = monitor.repository.status();
+    const active = (await this.app.storage()).execution.active();
+    const run = active ? await (await this.app.storage()).runs.get(active.runId) : null;
     return { provider: this.config.provider, closing: this.closing, now: this.clock.now().toISOString(),
       monitor: saved,
+      quota: quotaDisplay(saved, this.config, this.clock.now()),
+      currentRun: run ? { id: run.id, taskId: run.taskId, name: run.taskSnapshot.name, revision: run.taskRevision,
+        status: run.status, startedAt: run.startedAt } : null,
       events: monitor.repository.events().slice(-30),
       scheduler: (await this.app.scheduling()).repository.status(),
       recovery: (await this.recovery()).repository.report(),
@@ -129,7 +135,10 @@ export class ManagementService {
     this.changingLoop = true;
     try {
       if (action === "sample") {
-        if (this.loop?.job.state === "running") throw new AppError("MONITOR_BUSY", "持续监控已在查询额度，无需重复采样。");
+        if (this.loop?.job.state === "running") {
+          (await this.app.monitoring()).requestSample();
+          return { requested: true };
+        }
         return await (await this.app.monitoring()).sample();
       }
       if (!["monitor-start", "monitor-stop", "scheduler-start", "scheduler-stop"].includes(action)) throw new AppError("INVALID_ARGUMENT", "未知监控操作。");

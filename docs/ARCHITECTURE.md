@@ -191,3 +191,12 @@ DesktopLifecycle 使用领域 BackendSession 接口协调互斥的启动、停�
 ManagementService 在停止入口同步关闭新操作并暂停自有调度，wait 不中断活动执行，cancel 可以显式升级等待过程。
 HTTP 控制状态/取消接口在等待期间可用；后台工作、处理器和响应排空后关闭剩余连接，再关闭存储。
 完整退出语义及验证见 DESKTOP-LIFECYCLE.md。
+
+## GUI 基础框架与概览
+
+management/gui 使用严格 TypeScript ES 模块；api/state/shell/dom 提供公共请求、状态、路由及文本组件，页面各自维护呈现逻辑。
+contracts 只提供类型，浏览器运行时依赖被限制在 GUI 内；HTTP 静态资源使用 gui-assets 白名单，不开放 dist 目录或源码映射。
+ManagementService.state 提供 quota-display 展示模型及准确执行权关联的运行摘要，不增加前端派发算法。
+StateStore 合并并发查询并以服务端时间锚推进有效期；离线或到期先使额度未知，不能生成刷新事件。
+手动查询请求合并到现有 ContinuousQuotaMonitor，仍保留退避、事务检查点及刷新去重；停止监控后不由页面恢复循环。
+界面操作、模块边界及验收见 DESKTOP-GUI.md。

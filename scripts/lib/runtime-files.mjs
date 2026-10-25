@@ -13,7 +13,7 @@ export async function runtimeFiles({ desktop = false } = {}) {
       const emitted = path.replace(/\.(ts|cts)$/, (_match, extension) => extension === "cts" ? ".cjs" : ".js");
       return [join("dist/src", emitted), join("dist/src", emitted + ".map")];
     });
-  files.push(...["index.html", "app.js", "style.css"].map((name) => join("dist/src/management/public", name)),
+  files.push(...["index.html", "style.css"].map((name) => join("dist/src/management/public", name)),
     "config/example.json", "config/codex.example.json", "examples/tasks.json", "examples/prompts/review-project.md",
     "README.md", "launch.cmd", "launch.sh");
   if (desktop) files.push("dist/src/desktop/public/startup.html", "dist/src/desktop/public/startup.css");

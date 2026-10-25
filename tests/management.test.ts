@@ -74,6 +74,22 @@ test("管理状态保留缺失窗口、回退边界及未知账户的保守判�
   } finally { await env.cleanup(); }
 });
 
+test("GUI 仅提供白名单浏览器模块，不能读取服务端模块或源码映射", async () => {
+  const env = await setup();
+  try {
+    const modules = (await import("../src/management/gui-assets.js")).browserModules;
+    for (const name of modules) {
+      const response = await fetch(env.server.url + `/gui/${name}.js`);
+      assert.equal(response.status, 200); assert.match(response.headers.get("content-type") ?? "", /javascript/);
+    }
+    for (const path of ["/gui/service.js", "/gui/app.js.map", "/gui/../service.js", "/contracts.js", "/app.js"]) {
+      assert.equal((await fetch(env.server.url + path, { headers: { cookie: env.cookie } })).status, 404);
+    }
+    assert.equal((await env.action("sample")).status, 200);
+    assert.equal((await env.service.state()).loop, "monitor");
+  } finally { await env.cleanup(); }
+});
+
 test("同一时刻的两个手动请求只登记一个后台操作", async () => {
   const env = await setup("codex", "hang");
   try {
@@ -133,7 +149,7 @@ test("HTTP 仅允许本机 Host、同源会话和 CSRF；静态资源不暴露�
     assert.equal((await fetch(env.server.url + "/api/runtime", { headers: { cookie: env.cookie } })).status, 403);
     const large = await env.action("task-save", { prompt: "a".repeat(520 * 1024) });
     assert.equal(large.status, 413);
-    assert.equal((await fetch(env.server.url + "/app.js")).status, 200);
+    assert.equal((await fetch(env.server.url + "/gui/app.js")).status, 200);
   } finally { await env.cleanup(); }
 });
 
@@ -221,6 +237,10 @@ test("浏览器断开不取消手动执行；取消请求等待远端终止后�
       runId = (await env.service.state()).jobs.find((item) => item.id === job.id)?.runId ?? "";
       return !!runId && !!(await (await env.service.app.storage()).runs.get(runId))?.turnId;
     });
+    const current = (await env.service.state()).currentRun;
+    assert.equal(current?.id, runId);
+    assert.equal(current?.name, "One");
+    assert.ok(current && !Object.hasOwn(current, "promptSnapshot") && !Object.hasOwn(current, "output"));
     const cancelling = await (await env.action("cancel", { id: runId })).json() as { run: TaskRun; cancelRequested: boolean };
     assert.equal(cancelling.run.status, "running"); assert.equal(cancelling.cancelRequested, true);
     await until(async () => (await (await env.service.app.storage()).runs.get(runId))?.status === "cancelled");

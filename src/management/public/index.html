@@ -4,36 +4,49 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
-  <title>Codex Quota Scheduler · 本地控制台</title>
+  <title>Codex 任务助手 · 运行概览</title>
   <link rel="stylesheet" href="/style.css">
-  <script src="/app.js" type="module"></script>
+  <script src="/gui/app.js" type="module"></script>
 </head>
 <body>
+  <a class="skip-link" href="#page-title">跳到主要内容</a>
   <aside class="sidebar">
     <a href="#overview" class="brand"><span class="brand-mark">C<span>↗</span></span><span>Codex Quota<span class="brand-sub">SCHEDULER / 本地控制台</span></span></a>
     <div class="nav-label">工作空间</div>
     <nav aria-label="主要导航">
       <a href="#overview" data-view="overview"><span aria-hidden="true">◫</span>运行概览</a>
       <a href="#tasks" data-view="tasks"><span aria-hidden="true">☷</span>任务管理</a>
+      <a href="#queue" data-view="queue"><span aria-hidden="true">≡</span>调度队列</a>
       <a href="#runs" data-view="runs"><span aria-hidden="true">↗</span>运行记录</a>
       <a href="#recovery" data-view="recovery"><span aria-hidden="true">◇</span>异常与恢复</a>
-      <a href="#settings" data-view="settings"><span aria-hidden="true">⚙</span>配置与日志</a>
+      <a href="#settings" data-view="settings"><span aria-hidden="true">⚙</span>设置与帮助</a>
     </nav>
     <div class="sidebar-footer"><span class="status-dot"></span>仅在本机运行<span>127.0.0.1 · 数据保存在本地</span></div>
   </aside>
   <main>
-    <header class="topbar"><div><span class="eyebrow">工作空间 / <span id="breadcrumb">运行概览</span></span><h1 id="page-title">运行概览</h1></div><div class="top-actions"><span id="source" class="badge">连接中</span><button id="reload" class="icon-button" title="重新加载页面" aria-label="重新加载页面">↻</button></div></header>
+    <header class="topbar"><div><span class="eyebrow">工作空间 / <span id="breadcrumb">运行概览</span></span><h1 id="page-title" tabindex="-1">运行概览</h1></div><div class="top-actions"><button id="reload" title="重新连接本地服务">↻ 重新连接</button></div></header>
+    <div class="global-status" aria-label="全局状态"><span id="source" class="badge">来源待确认</span><span><span class="subtle">账户</span> <span id="account-status">账户待确认</span></span><span id="service-status" class="badge">正在连接</span><span class="subtle">本机数据 · 串行执行</span></div>
+    <div id="mock-notice" class="mode-banner" hidden>模拟体验 · 当前额度为模拟数据，真实执行和自动派发不可用。</div>
     <div id="notice" class="notice" role="status" hidden></div>
     <div id="connection" class="notice danger" role="alert" hidden></div>
     <section id="overview" class="view">
-      <div class="section-heading"><div><h2>账户额度</h2><p id="quota-caption">正在读取服务端额度…</p></div><div class="actions"><span id="monitor-status" class="subtle"></span><button data-action="monitor-start">开启监控</button><button data-action="monitor-stop" class="quiet">停止监控</button></div></div>
+      <div class="section-heading"><div><span class="eyebrow">QUOTA &amp; ACTIVITY</span><h2>账户额度</h2><p id="quota-caption">正在读取服务端额度…</p></div><div class="actions wrap"><span id="quota-availability"></span><button data-action="sample" class="primary">查询额度</button></div></div>
+      <div class="monitor-toolbar"><span id="monitor-status" class="subtle"></span><span id="freshness-status" class="badge">等待查询</span><span class="spacer"></span><button data-action="monitor-start">开启监控</button><button data-action="monitor-stop" class="quiet">停止监控</button></div>
+      <p id="quota-error" class="notice danger" role="status" hidden></p>
       <div id="quota-windows" class="quota-grid"></div>
+      <div class="query-meta"><span id="updated-at">等待首次查询</span><span id="next-query"></span></div>
+      <div class="summary-grid"><a class="summary-card" href="#queue"><span class="subtle">等待中的快照</span><strong id="waiting-count">—</strong><span id="queue-summary">等待连接</span><span class="text-link">查看队列 ↗</span></a><a class="summary-card" href="#recovery"><span class="subtle">需要核对</span><strong id="attention-count">—</strong><span>异常状态需人工处理</span><span class="text-link">进入异常处理 ↗</span></a><a class="summary-card" href="#tasks"><span class="subtle">下一步</span><strong class="summary-text">准备任务</strong><span>保存 → 显式入队 → 恢复派发</span><span class="text-link">管理任务 ↗</span></a></div>
       <div class="two-columns">
-        <article class="panel"><div class="panel-heading"><h2>自动调度</h2><span id="scheduler-badge" class="badge"></span></div><p id="scheduler-description" class="description"></p><div class="scheduler-status"><span id="worker-status"></span><span id="trigger-mode" class="subtle"></span></div><div class="actions wrap"><button data-action="scheduler-start">启动调度进程</button><button data-action="resume" class="primary">恢复队列</button><button data-action="pause">暂停队列</button><button data-action="scheduler-stop" class="quiet">停止进程</button></div><p class="hint">仅执行显式入队的版本快照。暂停队列会等待当前任务完成；停止进程会请求取消当前执行。</p></article>
-        <article class="panel"><div class="panel-heading"><h2>当前队列</h2><a href="#tasks" class="text-link">管理任务 ↗</a></div><div id="queue"></div></article>
+        <article class="panel"><div class="panel-heading"><h2>当前运行</h2><a href="#runs" class="text-link">运行记录 ↗</a></div><div id="current-run"></div></article>
+        <article class="panel"><div class="panel-heading"><h2>调度状态</h2><a href="#queue" class="text-link">调度控制 ↗</a></div><p id="overview-scheduler" class="description"></p><p class="hint">暂停只阻止领取下一项，当前任务可继续完成。重启后保持暂停。</p></article>
       </div>
-      <article class="panel"><div class="panel-heading"><h2>监控动态</h2><span id="updated-at" class="subtle"></span></div><div id="monitor-events"></div></article>
+      <article class="panel"><div class="panel-heading"><h2>最近动态</h2><span class="subtle">仅显示已保存的监控事件</span></div><div id="monitor-events"></div></article>
       <article id="jobs-panel" class="panel" hidden><div class="panel-heading"><h2>后台操作</h2><span class="subtle">关闭页面后仍继续运行</span></div><div id="jobs"></div></article>
+    </section>
+    <section id="queue" class="view" hidden>
+      <div class="section-heading"><div><h2>按快照串行派发</h2><p>编辑任务不会改变已经入队的版本。</p></div><a href="#tasks" class="text-link">管理任务 ↗</a></div>
+      <article class="panel"><div class="panel-heading"><h2>自动调度</h2><span id="scheduler-badge" class="badge"></span></div><p id="scheduler-description" class="description"></p><div class="scheduler-status"><span id="worker-status"></span><span id="trigger-mode" class="subtle"></span></div><div class="actions wrap"><button data-action="scheduler-start">启动调度进程</button><button data-action="resume" class="primary">恢复派发</button><button data-action="pause">暂停派发</button><button data-action="scheduler-stop" class="quiet">停止调度进程</button></div><p class="hint">暂停派发会让当前任务继续完成；停止进程会请求取消当前执行并等待结果保存。</p></article>
+      <article class="panel"><h2>持久化队列</h2><div id="queue-items"></div></article>
     </section>
     <section id="tasks" class="view" hidden>
       <div class="section-heading"><div><h2>维护任务，按需入队</h2><p>编辑生成新版本；已入队的指令快照保持不变。</p></div><button id="new-task" class="primary">＋ 新建任务</button></div>
@@ -49,6 +62,7 @@
       <article class="panel"><div class="panel-heading"><h2>待人工核对</h2><a href="#runs" class="text-link">全部运行记录 ↗</a></div><div id="attention"></div><p class="hint">审批或补充输入请求不会自动同意。确认已核对仅解除调度阻塞，记录仍保留待处理状态。</p></article>
     </section>
     <section id="settings" class="view" hidden>
+      <article class="panel"><h2>使用帮助</h2><p class="description">保存任务后显式加入队列；启动调度进程后仍需恢复派发。结果不明时，先在“异常与恢复”核对原会话，切勿重复发送。</p><p class="hint">当前提供基础页面与后台生命周期；托盘、系统通知和安装迁移由后续模块完成。关闭客户端会进入既有安全退出流程。</p></article>
       <div class="section-heading"><div><h2>运行配置</h2><p>保存时校验并备份；重启本地服务后生效。</p></div><span id="config-difference" class="badge"></span></div>
       <article class="panel"><form id="config-form"><div class="config-editor"><label>配置项<select id="config-key"><option>provider</option><option>pollIntervalMs</option><option>quotaMaxAgeMs</option><option>reservePercent</option><option>limitId</option><option>scheduler.trigger</option><option>tasksFile</option><option>storage.databasePath</option><option>codex.executable</option><option>codex.args</option><option>codex.home</option><option>codex.requestTimeoutMs</option><option>codex.shutdownTimeoutMs</option></select></label><label>值（JSON 或字符串）<input id="config-value" required autocomplete="off"></label><button type="submit" class="primary">保存配置</button></div><p class="hint">provider=mock 为模拟额度，不能提交真实任务。修改前请停止调度并等待执行或核对完成。</p></form><details><summary>查看正在生效的配置</summary><pre id="active-config"></pre></details></article>
       <article class="panel"><div class="panel-heading"><h2>运行日志</h2><button id="refresh-logs">刷新日志</button></div><p class="hint">日志自动轮转，仅记录事件与错误代码。任务输出保存在运行详情中。</p><pre id="runtime-logs" class="log-output"></pre></article>

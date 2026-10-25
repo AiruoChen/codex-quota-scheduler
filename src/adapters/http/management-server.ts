@@ -6,6 +6,7 @@ import { AppError } from "../../shared/errors.js";
 import { ManagementService } from "../../management/service.js";
 import type { RuntimeLogger } from "../../runtime/log.js";
 import type { ShutdownMode } from "../../domain/lifecycle.js";
+import { browserModules } from "../../management/gui-assets.js";
 
 export interface ServerOptions {
   port: number;
@@ -18,8 +19,10 @@ export interface ServerOptions {
 export async function serveManagement(service: ManagementService, options: ServerOptions) {
   const csrf = randomBytes(32).toString("hex");
   const cookie = `cqs_${options.instance.slice(0, 12)}=${randomBytes(32).toString("hex")}`;
-  const assets = new Map(await Promise.all(["index.html", "app.js", "style.css"].map(async (name) =>
-    [name, await readFile(new URL(`../../management/public/${name}`, import.meta.url))] as const)));
+  const assets = new Map(await Promise.all([
+    ...["index.html", "style.css"].map(async (name) => [name, await readFile(new URL(`../../management/public/${name}`, import.meta.url))] as const),
+    ...browserModules.map(async (name) => [`gui/${name}.js`, await readFile(new URL(`../../management/gui/${name}.js`, import.meta.url))] as const),
+  ]));
   let origin = "";
   let stopping = false;
   let shutdownMode: ShutdownMode | null = null;

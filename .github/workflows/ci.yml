@@ -44,6 +44,7 @@ jobs:
           name: desktop-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
           path: .local/**/diagnostics.json
           if-no-files-found: ignore
+          include-hidden-files: true
       - uses: actions/upload-artifact@v6
         with:
           name: CodexQuotaScheduler-win32-x64

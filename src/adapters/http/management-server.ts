@@ -8,6 +8,7 @@ import type { RuntimeLogger } from "../../runtime/log.js";
 import type { ShutdownMode } from "../../domain/lifecycle.js";
 import { browserModules } from "../../management/gui-assets.js";
 import { maskAccount } from "../../management/quota-display.js";
+import { readFeedRequest } from "./desktop-protocol.js";
 
 export interface ServerOptions {
   port: number;
@@ -55,10 +56,16 @@ export async function serveManagement(service: ManagementService, options: Serve
       const url = new URL(request.url ?? "/", origin);
       if (url.origin !== origin) throw new AppError("HTTP_FORBIDDEN", "请求地址不匹配。");
       const path = url.pathname;
-      if (path === "/api/runtime" || path === "/api/runtime/stop") {
+      if (["/api/runtime", "/api/runtime/stop", "/api/runtime/desktop", "/api/runtime/pause"].includes(path)) {
         if (!equal(request.headers.authorization, `Bearer ${options.controlToken}`)
           || request.headers["x-runtime-instance"] !== options.instance) throw new AppError("HTTP_FORBIDDEN", "运行实例不匹配。");
         if (path === "/api/runtime" && request.method === "GET") return reply(response, 200, { instance: options.instance, pid: process.pid, stopping, shutdownMode, ...service.activity() });
+        if (path === "/api/runtime/desktop" && request.method === "GET") return reply(response, 200, { instance: options.instance, pid: process.pid,
+          feed: await service.desktopFeed(readFeedRequest(url.searchParams)) });
+        if (path === "/api/runtime/pause" && request.method === "POST") {
+          await service.action("pause", {});
+          return reply(response, 200, { instance: options.instance, pid: process.pid, paused: true });
+        }
         if (path === "/api/runtime/stop" && request.method === "POST") {
           const mode = url.searchParams.get("mode") ?? "cancel";
           if (mode !== "wait" && mode !== "cancel") throw new AppError("INVALID_ARGUMENT", "未知停止方式。");

@@ -56,7 +56,7 @@ account/read（refreshToken=false）、account/rateLimits/read。成功或失败
 - `TaskExecutor.execute()`：接收持久化运行快照、取消信号与事件接收器，返回 `ExecutionOutcome`；运行状态由应用层落盘。
 - `TaskRepository` / `RunRepository`：分别管理版本化任务定义、不可变快照和运行状态。
 - `Clock`：业务逻辑可使用固定时间测试，避免依赖真实等待。
-- `Notifier`：预留本地通知实现。
+- `Notifier`：原预留演示端口；桌面通知使用独立领域策略与 NoticeChannel 端口，见文末。
 
 协议返回先经 adapters/codex/normalize-quota.ts 转换，调度器只使用领域模型。
 `null` 表示未知，不能转换成零消耗或额度已刷新。没有返回五小时窗口时不补造窗口。
@@ -176,7 +176,7 @@ HTTP 适配器使用 Node 内置 http，仅绑定 127.0.0.1，检查准确 Host 
 
 固定事件日志大小轮转，不记录提示词、输出、账户或路径；日志写入失败不会打断已提交任务的落盘流程。
 构建复制静态资源到 dist，便携目录只包含运行代码、示例与文档，无第三方运行依赖。
-托盘、原生通知、开机启动和安装器留待后续系统集成。
+桌面托盘与原生通知已实现，开机启动和安装器留待后续系统集成。
 
 ## 最小桌面客户端
 
@@ -205,3 +205,13 @@ StateStore 合并并发查询并以服务端时间锚推进有效期；离线或
 SelectedResource 合并当前详情读取并隔离旧选择响应，run-detail 保留选择、展开状态与阅读位置，clipboard 只提供用户发起的文本复制。
 recovery-model 提供问题说明，recovery 页面复用原检查、只读核对、事务应用与人工确认接口；没有新增远端恢复协议或自动修复入口。
 只读核对摘要属于当前后台会话，永久恢复审计仍由既有仓储保存。详见 DESKTOP-RUNS-RECOVERY.md。
+
+## 桌面托盘与通知
+
+domain/notifications 提供纯通知策略与固定脱敏文案；desktop/notifications 通过 NoticeChannel 端口组合系统显示，不让调度器依赖 Electron。
+storage/desktop-feed 在同步事务中读取既有事件及准确运行状态，以游标分页；只在对应结果已保存时产生终态通知。
+management/service 验证当前额度查询和账户边界，HTTP 桌面接口只返回白名单元数据，使用独立控制密钥与实例身份校验。
+desktop/notification-store 将偏好、游标、去重和有界本地记录一起原子保存后才尝试原生显示，损坏文件不会重建为空。
+adapters/electron 实现托盘和通知，desktop/visibility 协调首次说明及不可用回退；安全退出仍由原生命周期处理。
+通知点击只接受已存储记录 ID，并重新校验当前来源后定位准确运行；管理页面不获得通知控制或生命周期权限。
+系统显示为尽力请求，显示结果不明不盲目重试。规则、验证和发布边界见 DESKTOP-TRAY-NOTIFICATIONS.md。

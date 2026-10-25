@@ -3,6 +3,7 @@ import type { LifecycleCommand, LifecycleView } from "../domain/lifecycle.js";
 declare global {
   interface Window {
     desktopLifecycle: { read(): Promise<LifecycleView>; command(command: LifecycleCommand): Promise<void>;
+      openNotice(id: string): Promise<void>;
       onChange(listener: (view: LifecycleView) => void): () => void };
   }
 }
@@ -32,6 +33,25 @@ function render(view: LifecycleView) {
           : view.phase === "stopped" ? "任务和历史记录已保留。再次启动后队列保持暂停。" : "默认使用模拟环境。只有显式恢复真实队列后才会派发任务。";
   activity.textContent = view.activity ? `活动操作 ${view.activity.activeOperations} · 队列${view.activity.paused ? "已暂停" : "可派发"}${view.activity.activeRunId ? " · 存在运行中任务" : ""}` : "尚无可验证的活动状态";
   error.textContent = view.code ?? "";
+  const desktop = view.desktop;
+  document.querySelector<HTMLElement>("#tray-notice")!.hidden = !desktop?.closeNotice;
+  document.querySelector<HTMLElement>("#desktop-reason")!.textContent = desktop?.reason
+    ? `${desktop.reason} · 桌面集成不可用时请保留窗口，或选择安全退出。` : "";
+  document.querySelector<HTMLElement>("#desktop-status")!.textContent = `${desktop?.trayAvailable ? "托盘可用" : "托盘不可用"} · 系统通知${desktop?.notificationSupported ? "通道支持" : "通道不可用"} · 本地通知记录始终保留`;
+  for (const [id, checked] of [["notifications-enabled", desktop?.settings?.enabled], ["quota-notifications-enabled", desktop?.settings?.quotaReset]] as const) {
+    const input = document.querySelector<HTMLInputElement>(`#${id}`)!; input.checked = !!checked; input.disabled = !desktop?.settings || view.phase === "stopping";
+  }
+  const history = document.querySelector<HTMLElement>("#notification-history")!;
+  history.replaceChildren();
+  const deliveries: Record<string, string> = { disabled: "系统通知已关闭 · 已记录", attempted: "已请求系统显示", unsupported: "系统通道不可用 · 已记录", failed: "系统显示请求失败 · 已记录", local: "批量状态变化 · 仅本地记录" };
+  for (const notice of desktop?.notices ?? []) {
+    const item = document.createElement("article"), title = document.createElement("strong"), body = document.createElement("p"), meta = document.createElement("small"), open = document.createElement("button");
+    title.textContent = notice.title; body.textContent = notice.body;
+    meta.textContent = `${new Date(notice.createdAt).toLocaleString("zh-CN")} · ${deliveries[notice.delivery] ?? "已记录"}`;
+    open.textContent = "打开对应页面"; open.onclick = () => { open.disabled = true; void window.desktopLifecycle.openNotice(notice.id).catch(() => { error.textContent = "通知来源不可验证或记录已过期，请核对当前配置。"; }).finally(() => { open.disabled = false; }); };
+    item.append(title, body, meta, open); history.append(item);
+  }
+  if (!desktop?.notices.length) history.textContent = "尚无通知记录。历史任务不会在首次连接时集中弹出。";
   for (const button of document.querySelectorAll<HTMLButtonElement>("[data-command]")) {
     const command = button.dataset.command as LifecycleCommand;
     const ready = view.phase === "running";
@@ -43,19 +63,28 @@ function render(view: LifecycleView) {
     if (command === "stop-external") enabled = ready && view.connection?.owned === false && !view.intent;
     if (command === "recover") enabled = !busy && !view.intent && ["RUNTIME_STALE", "DESKTOP_BACKEND_EXITED"].includes(view.code ?? "");
     if (command === "exit") enabled = !busy && !view.intent;
-    if (command === "keep-open") enabled = view.phase !== "stopping";
+    if (command === "keep-open") enabled = view.phase !== "stopping" && (ready || !!view.intent);
+    if (command === "hide") enabled = !!desktop?.trayAvailable && view.phase !== "stopping";
+    if (command === "show") enabled = ready && !view.intent;
+    if (command === "pause") enabled = ready && !view.activity?.paused && !view.intent;
     if (command === "wait") enabled = confirming;
     if (command === "cancel") enabled = confirming && view.intent !== "recover" || view.phase === "stopping" && view.mode === "wait";
     button.disabled = !enabled;
     button.hidden = view.phase === "stopping" ? command !== "status" && !(command === "cancel" && view.mode === "wait")
-      : view.intent && !busy ? !["wait", "cancel", "keep-open"].includes(command) || command === "cancel" && view.intent === "recover"
+      : view.intent && !busy ? !["wait", "cancel", "keep-open", "hide"].includes(command) || command === "cancel" && view.intent === "recover"
         : !enabled;
     if (command === "wait") button.textContent = view.intent === "recover" ? "确认核对服务记录" : view.intent === "restart" ? "等待完成后重启"
       : view.intent === "exit" ? "等待完成后退出" : "确认停止并等待完成";
     if (command === "cancel") button.textContent = view.phase === "stopping" ? "改为请求取消" : view.intent === "restart" ? "请求取消后重启"
       : view.intent === "exit" ? "请求取消后退出" : "请求取消并停止";
     if (command === "keep-open") button.textContent = view.intent ? "继续保留窗口" : "返回管理界面";
+    if (command === "hide") button.textContent = view.intent === "exit" ? "留在托盘" : desktop?.closeNotice ? "知道了，隐藏到托盘" : "隐藏到托盘";
   }
+}
+for (const [id, command] of [["notifications-enabled", "notifications-toggle"], ["quota-notifications-enabled", "quota-notifications-toggle"]] as const) {
+  document.querySelector<HTMLInputElement>(`#${id}`)!.addEventListener("change", () => {
+    void window.desktopLifecycle.command(command).catch(() => { error.textContent = "通知偏好未能保存，请核对桌面状态文件。"; }).finally(() => { void window.desktopLifecycle.read().then(render); });
+  });
 }
 for (const button of document.querySelectorAll<HTMLButtonElement>("[data-command]")) {
   button.addEventListener("click", () => {

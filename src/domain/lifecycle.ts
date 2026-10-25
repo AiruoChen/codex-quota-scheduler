@@ -9,6 +9,8 @@ export interface BackendSession {
   status(): Promise<RuntimeControlStatus>;
   close(mode?: ShutdownMode, stopExternal?: boolean): Promise<void>;
   escalate(): Promise<void>;
+  desktopFeed?(request: import("./notifications.js").FeedRequest): Promise<import("./notifications.js").DesktopFeed>;
+  pauseDispatch?(): Promise<void>;
 }
 export interface LifecycleState {
   phase: "idle" | "starting" | "running" | "stopping" | "stopped" | "failed" | "disconnected";
@@ -18,6 +20,6 @@ export interface LifecycleState {
   mode: ShutdownMode | null;
 }
 export type LifecycleIntent = "exit" | "stop" | "restart" | "stop-external" | "recover";
-export const lifecycleCommands = ["start", "status", "restart", "stop", "stop-external", "recover", "exit", "wait", "cancel", "keep-open"] as const;
+export const lifecycleCommands = ["start", "status", "restart", "stop", "stop-external", "recover", "exit", "wait", "cancel", "keep-open", "hide", "show", "pause", "notifications-toggle", "quota-notifications-toggle"] as const;
 export type LifecycleCommand = typeof lifecycleCommands[number];
-export interface LifecycleView extends LifecycleState { intent: LifecycleIntent | null }
+export interface LifecycleView extends LifecycleState { intent: LifecycleIntent | null; desktop?: import("./desktop.js").DesktopStatus }

@@ -12,6 +12,14 @@ export class DesktopLifecycle {
     private readonly changed: (state: LifecycleState) => void = () => {}) {}
 
   snapshot(): LifecycleState { return structuredClone(this.state); }
+  async desktopFeed(request: import("../domain/notifications.js").FeedRequest) {
+    if (!this.backend?.desktopFeed) throw new AppError("RUNTIME_INCOMPATIBLE", "当前后台不支持桌面通知接口。");
+    return this.backend.desktopFeed(request);
+  }
+  async pauseDispatch(): Promise<void> {
+    if (this.state.phase !== "running" || !this.backend?.pauseDispatch) throw new AppError("RUNTIME_UNREACHABLE", "请先验证后台连接。");
+    await this.backend.pauseDispatch(); await this.check();
+  }
   private activity(status: RuntimeActivity): RuntimeActivity {
     return { activeOperations: status.activeOperations, activeRunId: status.activeRunId, paused: status.paused };
   }

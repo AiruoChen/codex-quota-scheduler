@@ -411,3 +411,17 @@ test("运行分页按状态/项目筛选并保留历史版本，不返回正文�
     assert.equal((await env.get(`/api/run?id=${run.id}`)).origin, null);
   } finally { await env.cleanup(); }
 });
+
+test("托盘后台接口校验控制密钥与实例；暂停不停止服务或当前操作，事件不暴露正文", async () => {
+  const env = await setup();
+  try {
+    for (const path of ["/api/runtime/desktop", "/api/runtime/pause"]) assert.equal((await fetch(env.server.url + path, { method: path.endsWith("pause") ? "POST" : "GET", headers: { cookie: env.cookie, "X-CSRF-Token": env.csrf } })).status, 403);
+    const headers = { Authorization: "Bearer test-secret", "X-Runtime-Instance": "01234567-abcd-1234-abcd-0123456789ab" };
+    const response = await fetch(env.server.url + "/api/runtime/desktop", { headers }); assert.equal(response.status, 200);
+    const text = await response.text(); assert.ok(!text.includes(env.dir)); assert.ok(!text.includes("test-secret"));
+    assert.equal((await fetch(env.server.url + "/api/runtime/desktop?execution=-1", { headers })).status, 400);
+    (await env.service.app.scheduling()).repository.resume(); assert.equal((await env.service.state()).scheduler.paused, false);
+    assert.equal((await fetch(env.server.url + "/api/runtime/pause", { method: "POST", headers })).status, 200);
+    assert.equal((await env.service.state()).scheduler.paused, true); assert.equal((await env.service.state()).loop, "monitor");
+  } finally { await env.cleanup(); }
+});

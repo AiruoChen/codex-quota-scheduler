@@ -2,7 +2,11 @@ import { $, setDisabled } from "./dom.js";
 import type { ViewState } from "./state.js";
 export const titles = { overview: "运行概览", tasks: "任务管理", queue: "调度队列", runs: "运行记录", recovery: "异常与恢复", settings: "设置与帮助" };
 export type View = keyof typeof titles;
-export function route(hash = location.hash): View { const key = hash.slice(1); return Object.hasOwn(titles, key) ? key as View : "overview"; }
+export function route(hash = location.hash): View { const key = hash.slice(1).split("/")[0]!; return Object.hasOwn(titles, key) ? key as View : "overview"; }
+export function routeRunId(hash = location.hash): string | null {
+  if (!hash.startsWith("#runs/")) return null;
+  try { const id = decodeURIComponent(hash.slice(6)); return id.length > 0 && id.length <= 200 && !id.includes("\0") ? id : null; } catch { return null; }
+}
 export function navigate(view: View, focus = false) {
   for (const [id, title] of Object.entries(titles)) {
     $(id).hidden = id !== view;

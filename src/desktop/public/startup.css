@@ -12,3 +12,10 @@ button.danger { color: #a32f29; border-color: #d7a6a2; }
 [hidden] { display: none !important; }
 .hint { color: #5b6777; font-size: 13px; }
 #error { color: #a32f29; font-family: monospace; }
+section { border-top:1px solid #ccd5e1; margin-top:24px; padding-top:16px }
+section label { display:block; margin:10px 0 }
+#desktop-reason { color:#a32f29; font-size:13px }
+#notification-history { max-height:320px; overflow:auto; font-size:13px }
+#notification-history article { border-top:1px solid #dce2ea; padding:14px 0 }
+#notification-history article p { margin:4px 0 }
+#notification-history small { display:block; color:#5b6777; margin-bottom:8px }

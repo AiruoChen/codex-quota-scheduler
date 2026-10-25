@@ -3,7 +3,7 @@ import { $, busy, notice } from "./dom.js";
 import type { ManagementState } from "../contracts.js";
 import type { UiContext } from "./context.js";
 import { StateStore } from "./state.js";
-import { route, navigate, renderShell } from "./shell.js";
+import { route, routeRunId, navigate, renderShell } from "./shell.js";
 import { renderOverview, tickOverview } from "./overview.js";
 import { queueView } from "./queue.js";
 import { recoveryView } from "./recovery.js";
@@ -55,7 +55,12 @@ async function loadView() {
 async function refresh() { await store.refresh(); await loadView(); }
 async function changeView(focus = false) {
   view = route(); navigate(view, focus);
-  try { await loadView(); if (view === "settings" && store.value.connected) await settings.load(); }
+  try {
+    await loadView();
+    if (view === "settings" && store.value.connected) await settings.load();
+    const runId = routeRunId();
+    if (view === "runs" && runId && store.value.connected) await runs.open(runId);
+  }
   catch (error) { notice(error instanceof Error ? error.message : "页面读取失败", true); }
 }
 window.addEventListener("hashchange", () => { void changeView(true); });
@@ -83,3 +88,5 @@ setInterval(() => {
 navigate(view); renderShell(store.value);
 await poll();
 if (view === "settings" && store.value.connected) await settings.load().catch((error: unknown) => notice(String(error), true));
+const linkedRun = routeRunId();
+if (linkedRun && store.value.connected) await runs.open(linkedRun).catch((error: unknown) => notice(String(error), true));

@@ -7,6 +7,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { root } from "./lib/runtime-files.mjs";
 import { desktopDebugger } from "./lib/desktop-debugger.mjs";
 import { desktopDiagnostics } from "./lib/desktop-diagnostics.mjs";
+import { closeWindow } from "./lib/close-window.mjs";
 import { desktopOptions, initializeDesktopProfile } from "../dist/src/desktop/profile.js";
 import { ConfigManager } from "../dist/src/config/manage.js";
 import { SqliteStore } from "../dist/src/storage/sqlite-store.js";
@@ -22,7 +23,7 @@ const artifacts = await mkdtemp(join(root, ".local/lifecycle-acceptance-"));
 const results = [];
 for (const [scenario, choice, expected] of [["lifecycle-success", "wait", "succeeded"], ["hang", "cancel", "cancelled"],
   ["cancel-unconfirmed", "escalate", "needs_attention"], ["external", "detach", "running"], ["external-stop", "confirmed-stop", "stopped"],
-  ["startup-error", "retry", "running"]]) {
+  ["startup-error", "retry", "running"], ["tray-complete", "background", "succeeded"]]) {
   const profile = join(artifacts, scenario);
   const options = desktopOptions([], profile);
   await initializeDesktopProfile(options);
@@ -32,7 +33,7 @@ for (const [scenario, choice, expected] of [["lifecycle-success", "wait", "succe
     const manager = new ConfigManager(options.configPath);
     await manager.set("provider", "codex");
     await manager.set("codex.executable", executable);
-    await manager.set("codex.args", [join(root, "tests/fixtures/fake-execution.mjs"), "--scenario", scenario, "--trace", trace, "--project", profile]);
+    await manager.set("codex.args", [join(root, "tests/fixtures/fake-execution.mjs"), "--scenario", scenario === "tray-complete" ? "lifecycle-success" : scenario, "--trace", trace, "--project", profile]);
   }
   if (scenario === "startup-error") await writeFile(options.configPath, "broken-config");
   const owner = scenario.startsWith("external") ? new DesktopBackend(options.configPath, {
@@ -74,8 +75,9 @@ for (const [scenario, choice, expected] of [["lifecycle-success", "wait", "succe
     }
     page = await desktopDebugger(pages.find((target) => target.url.startsWith("http://127.0.0.1:")).webSocketDebuggerUrl);
     await control.wait("window.desktopLifecycle.read().then(v => v.phase === 'running')");
+    if (scenario === "tray-complete") await control.evaluate("window.desktopLifecycle.command('notifications-toggle')");
     if (scenario === "startup-error") {
-      await page.call("Browser.close").catch(() => {});
+      await control.evaluate("window.desktopLifecycle.command('exit')").catch(() => {});
       assert.equal(await Promise.race([exited, delay(15000, undefined, { ref: false }).then(() => { throw new Error("Retry shutdown timeout"); })]), 0);
     } else if (owner) {
       assert.equal(await control.evaluate("window.desktopLifecycle.read().then(v => v.connection.owned)"), false);
@@ -87,7 +89,7 @@ for (const [scenario, choice, expected] of [["lifecycle-success", "wait", "succe
         await control.wait("window.desktopLifecycle.read().then(v => v.phase === 'stopped')");
         assert.equal(await readInstance(options.configPath), null);
       } else await control.evaluate("window.desktopLifecycle.command('keep-open')");
-      await page.call("Browser.close").catch(() => {});
+      await control.evaluate("window.desktopLifecycle.command('exit')").catch(() => {});
     } else {
       const runId = await page.evaluate(`(async () => {
         const csrf=(await(await fetch('/api/bootstrap')).json()).csrf;
@@ -97,20 +99,35 @@ for (const [scenario, choice, expected] of [["lifecycle-success", "wait", "succe
         for(let i=0;i<100;i++){const state=await(await fetch('/api/state')).json();const runId=state.jobs.find(item=>item.id===job.id)?.runId;if(runId){const detail=await(await fetch('/api/run?id='+encodeURIComponent(runId))).json();if(detail.run.turnId)return runId}await new Promise(done=>setTimeout(done,25))}throw new Error('Fixture turn did not start');
       })()`);
       await control.evaluate("window.desktopLifecycle.command('status')");
-      await control.evaluate("window.desktopLifecycle.command('exit')");
-      assert.equal(await control.evaluate("window.desktopLifecycle.read().then(v => v.intent)"), "exit");
-      await control.evaluate("window.desktopLifecycle.command('keep-open')");
-      assert.equal(await control.evaluate("window.desktopLifecycle.read().then(v => v.phase)"), "running");
-      await control.evaluate("window.desktopLifecycle.command('exit')");
-      const firstChoice = choice === "escalate" ? "wait" : choice;
-      await control.evaluate(`document.querySelector('[data-command=${firstChoice}]').click(); true`);
-      // Immediate terminal confirmation may close the window before a screenshot is captured.
-      // The escalation case deliberately remains waiting until this test chooses cancellation.
-      if (choice === "escalate") {
-        await control.wait("window.desktopLifecycle.read().then(v => v.phase === 'stopping' && v.mode === 'wait')");
-        const screenshot = await control.call("Page.captureScreenshot", { format: "png" });
-        await writeFile(join(profile, "stopping.png"), Buffer.from(screenshot.data, "base64"));
-        await control.evaluate("document.querySelector('[data-command=cancel]').click(); true");
+      if (scenario === "tray-complete") {
+        const pid = (await readInstance(options.configPath)).pid;
+        await control.evaluate("window.desktopLifecycle.command('show')");
+        await closeWindow(page, child.pid);
+        await control.wait("window.desktopLifecycle.read().then(v=>v.desktop.closeNotice)");
+        await control.evaluate("window.desktopLifecycle.command('hide')");
+        await control.wait("window.desktopLifecycle.read().then(v=>v.desktop.hidden)");
+        assert.equal((await readInstance(options.configPath)).pid,pid);
+        await control.wait("window.desktopLifecycle.read().then(v=>v.desktop.notices.some(n=>n.title.includes('任务已完成')))");
+        const id=await control.evaluate("window.desktopLifecycle.read().then(v=>v.desktop.notices.find(n=>n.title.includes('任务已完成')).id)");
+        await control.evaluate(`window.desktopLifecycle.openNotice(${JSON.stringify(id)})`);
+        await page.wait(`document.getElementById('run-dialog')?.open && document.getElementById('run-detail').textContent.includes('${runId}')`);
+        await control.evaluate("window.desktopLifecycle.command('exit')").catch(()=>{});
+      } else {
+        await control.evaluate("window.desktopLifecycle.command('exit')");
+        assert.equal(await control.evaluate("window.desktopLifecycle.read().then(v => v.intent)"), "exit");
+        await control.evaluate("window.desktopLifecycle.command('keep-open')");
+        assert.equal(await control.evaluate("window.desktopLifecycle.read().then(v => v.phase)"), "running");
+        await control.evaluate("window.desktopLifecycle.command('exit')");
+        const firstChoice = choice === "escalate" ? "wait" : choice;
+        await control.evaluate(`document.querySelector('[data-command=${firstChoice}]').click(); true`);
+        // Immediate terminal confirmation may close the window before a screenshot is captured.
+        // The escalation case deliberately remains waiting until this test chooses cancellation.
+        if (choice === "escalate") {
+          await control.wait("window.desktopLifecycle.read().then(v => v.phase === 'stopping' && v.mode === 'wait')");
+          const screenshot = await control.call("Page.captureScreenshot", { format: "png" });
+          await writeFile(join(profile, "stopping.png"), Buffer.from(screenshot.data, "base64"));
+          await control.evaluate("document.querySelector('[data-command=cancel]').click(); true");
+        }
       }
       const code = await Promise.race([exited, delay(20000, undefined, { ref: false }).then(() => { throw new Error("Lifecycle shutdown timeout"); })]);
       assert.equal(code, 0, stderr);
@@ -118,7 +135,7 @@ for (const [scenario, choice, expected] of [["lifecycle-success", "wait", "succe
       try { assert.equal((await store.runs.get(runId))?.status, expected); } finally { store.close(); }
       const requests = await readFile(trace, "utf8");
       assert.equal(requests.split('"method":"turn/start"').length - 1, 1);
-      if (choice === "wait") assert.ok(!requests.includes('"method":"turn/interrupt"'));
+      if (choice === "wait" || choice === "background") assert.ok(!requests.includes('"method":"turn/interrupt"'));
     }
     if (owner) {
       assert.equal(await Promise.race([exited, delay(15000, undefined, { ref: false }).then(() => { throw new Error("External detach timeout"); })]), 0);

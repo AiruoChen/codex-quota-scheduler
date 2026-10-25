@@ -11,6 +11,9 @@ import type { SchedulerRepository } from "../domain/scheduler.js";
 import type { ExecutionRepository } from "../storage/execution-repository.js";
 import { setTimeout as delay } from "node:timers/promises";
 import { quotaDisplay } from "./quota-display.js";
+import { desktopEvents } from "../storage/desktop-feed.js";
+import { digest } from "../monitor/recognize.js";
+import type { FeedRequest, DesktopFeed } from "../domain/notifications.js";
 
 export interface ManagementJob {
   id: number;
@@ -56,6 +59,23 @@ export class ManagementService {
   }
 
   recovery() { return this.recoveryPromise ??= this.app.recovery(); }
+
+  async desktopFeed(request: FeedRequest): Promise<DesktopFeed> {
+    const store = await this.app.storage(), monitor = await this.app.monitoring();
+    return store.database.transaction(() => {
+      const identity = store.database.connection.prepare("SELECT value FROM metadata WHERE key='database_identity'").get()?.value;
+      if (typeof identity !== "string" || !/^[a-f0-9]{32}$/.test(identity)) throw new AppError("STORAGE_INVALID", "数据库来源标识无效，请保留原文件核对。");
+      const scope = digest([identity, this.config]);
+      const state = monitor.repository.status();
+      const events = monitor.repository.events(), now = this.clock.now().getTime();
+      const boundary = events.filter((event) => ["baseline", "identity_changed", "clock_changed"].includes(event.type)).at(-1)?.sequence ?? 0;
+      const age = now - Date.parse(state?.snapshot?.fetchedAt ?? "");
+      const fresh = !!state?.identity && !state.errorCode && age >= 0 && age <= this.config.quotaMaxAgeMs;
+      return { provider: this.config.provider, ...desktopEvents(store.database, scope, request.scope === scope ? request.cursor : null, events,
+        (event) => fresh && event.sequence > boundary && now >= Date.parse(event.createdAt) && now - Date.parse(event.createdAt) <= this.config.quotaMaxAgeMs),
+        monitor: state ? { failures: state.failures, errorCode: state.errorCode } : null };
+    });
+  }
 
   private ensureOpen(): void {
     if (this.closing) throw new AppError("RUNTIME_STOPPING", "服务正在停止，请等待当前操作结束。");

@@ -10,12 +10,19 @@
 <body><main><p class="brand">CODEX QUOTA SCHEDULER · 后台服务</p>
   <h1 id="status-title">正在连接后台</h1><p id="status-detail">正在核对本机配置与服务记录。</p>
   <p id="activity" class="activity"></p><p id="error" role="status"></p>
+  <p id="tray-notice" class="activity" hidden>关闭只隐藏窗口，不改变后台或派发状态。可从托盘打开窗口、暂停派发或安全退出。</p>
   <div class="actions">
     <button data-command="start">启动 / 重试连接</button><button data-command="status">查询状态</button>
     <button data-command="restart">重启自有后台</button><button data-command="stop">停止自有后台</button>
     <button data-command="stop-external">停止外部服务…</button><button data-command="recover">核对服务记录…</button>
     <button data-command="exit">退出客户端</button><button data-command="keep-open">保持窗口打开</button>
     <button data-command="wait" hidden>确认 / 等待完成</button><button data-command="cancel" class="danger" hidden>请求取消并继续</button>
-  </div><p class="hint">关闭此状态窗口可返回管理界面。托盘尚未实现，后台仅在客户端或独立服务仍运行时保持工作。</p>
+    <button data-command="hide">隐藏到托盘</button><button data-command="pause">暂停派发（当前任务继续）</button>
+  </div><p class="hint">有托盘时，关闭窗口保留后台。安全退出仍会等待结果落盘；外部服务只断开连接。</p>
+  <section aria-label="通知设置"><h2>托盘与通知</h2><p id="desktop-status" class="hint"></p><p id="desktop-reason" role="status"></p>
+    <label><input id="notifications-enabled" type="checkbox">启用系统通知</label>
+    <label><input id="quota-notifications-enabled" type="checkbox">通知完整查询已确认的额度刷新</label>
+    <h3>最近通知（最多 50 条）</h3><div id="notification-history" aria-live="polite"></div>
+  </section>
 </main><script type="module" src="../control-renderer.js"></script></body>
 </html>

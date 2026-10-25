@@ -76,8 +76,24 @@ node --experimental-sqlite scripts/smoke-lifecycle.mjs --packaged .release/deskt
 Electron 交互覆盖重启确认与任务保留，以及成功等待、取消确认、取消未确认、外部服务断开、外部服务确认停止、启动错误保留与显式重试六个场景。
 仅使用临时数据、模拟时钟/状态与本机协议替身，无真实账户任务。截图和结果保存在被忽略的 `.local` 下。
 
-本机最终结果：严格检查通过；201 项回归通过；模拟演示通过；打包 EXE 的标准桌面交互与六个生命周期场景通过，0 页面脚本异常。
+本机最终结果：严格检查通过；202 项回归通过；模拟演示通过；打包 EXE 的标准桌面交互与六个生命周期场景通过，0 页面脚本异常。
 本机覆盖隔离 PATH 和 Windows x64 实际运行；未声称完成干净虚拟机、系统强制断电、签名安装器或真实账户执行验收。
+
+## CI 中的重启与刷新回归
+
+曾出现同一提交的 push 检查失败而 PR 检查通过：后台已就绪时，页面可能仍在导航，立即刷新会中止原 loadURL。
+旧逻辑将导航中止误记为后台故障，管理窗口留在隐藏状态，随后等待模拟来源标签超时。
+
+修复后只把真实加载错误作为故障；刷新造成的导航中止会重新打开当前已验证的后台地址，加载完成后恢复显示。
+这个过程只重载页面，不重启进程、不自动恢复派发或重新提交任务。
+
+桌面 smoke 首轮会主动拦截新 Document，在其尚未加载完成时触发刷新，然后验证实际页面地址、可见状态及模拟来源，连续进行三轮重启。
+仅后台 PID 变化或状态变为 running 不再被当作页面就绪证据。
+两类 GUI 验收应顺序运行，避免原生窗口相互遮挡影响 Chromium 的可见状态判断；CI 已按顺序执行。
+失败时只上传 `.local/**/diagnostics.json`，包含检查阶段、页面状态和生命周期摘要；不上传用户目录、实例文件、日志、指令或控制密钥。
+
+工作流使用 Node.js 24 运行的 checkout/setup-node/upload-artifact v6，项目检查仍使用 Node.js 22。
+验收同时核对 push 和 pull_request 两类记录，不能用其中一次成功覆盖另一次失败。
 
 API 与安全模式参考官方 [Electron IPC](https://www.electronjs.org/docs/latest/tutorial/ipc)、[powerMonitor](https://www.electronjs.org/docs/latest/api/power-monitor)
 及 [Node HTTP 关闭接口](https://nodejs.org/api/http.html#servercloseallconnections)。实现采用安装版本的类型定义，并通过实际 Electron 运行验收。

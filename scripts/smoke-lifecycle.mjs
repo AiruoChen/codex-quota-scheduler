@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { root } from "./lib/runtime-files.mjs";
 import { desktopDebugger } from "./lib/desktop-debugger.mjs";
+import { desktopDiagnostics } from "./lib/desktop-diagnostics.mjs";
 import { desktopOptions, initializeDesktopProfile } from "../dist/src/desktop/profile.js";
 import { ConfigManager } from "../dist/src/config/manage.js";
 import { SqliteStore } from "../dist/src/storage/sqlite-store.js";
@@ -128,6 +129,9 @@ for (const [scenario, choice, expected] of [["lifecycle-success", "wait", "succe
     } else assert.equal(await readInstance(options.configPath), null);
     assert.deepEqual(page.errors, []); assert.deepEqual(control.errors, []);
     results.push({ scenario, choice, status: expected, passed: true });
+  } catch (error) {
+    await desktopDiagnostics(profile, { checkpoint: scenario, error, page, control }).catch(() => {});
+    throw error;
   } finally {
     page?.close(); control?.close();
     if (child.exitCode === null) child.kill();

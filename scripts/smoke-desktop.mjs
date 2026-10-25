@@ -7,6 +7,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { root } from "./lib/runtime-files.mjs";
 import { readInstance } from "../dist/src/runtime/instance.js";
 import { desktopDebugger } from "./lib/desktop-debugger.mjs";
+import { desktopDiagnostics } from "./lib/desktop-diagnostics.mjs";
 
 const args = process.argv.slice(2);
 if (args.length && (args.length !== 2 || args[0] !== "--packaged")) throw new Error("Usage: smoke-desktop.mjs [--packaged path/to/client.exe]");
@@ -28,12 +29,10 @@ const child = spawn(executable, launchArgs, { cwd: artifacts, env, windowsHide: 
 let stderr = "";
 child.stderr.on("data", (chunk) => { stderr = (stderr + chunk.toString()).slice(-4000); });
 const exited = new Promise((done, reject) => { child.once("error", reject); child.once("exit", (code) => done(code)); });
-let socket;
+let pageDebugger;
 let controlDebugger;
 let secondary;
-const pending = new Map();
-let sequence = 0;
-const scriptErrors = [];
+let checkpoint = "launch";
 try {
   let port;
   for (let attempt = 0; attempt < 150; attempt++) {
@@ -50,35 +49,9 @@ try {
     await delay(100);
   }
   assert.ok(page, "Management page loaded: " + stderr);
-  socket = new WebSocket(page.webSocketDebuggerUrl);
-  await new Promise((done, reject) => { socket.onopen = done; socket.onerror = reject; });
-  socket.onmessage = ({ data }) => {
-    const message = JSON.parse(data);
-    if (message.method === "Runtime.exceptionThrown") scriptErrors.push(message.params.exceptionDetails.text);
-    if (message.id) {
-      const request = pending.get(message.id);
-      if (!request) return;
-      pending.delete(message.id); clearTimeout(request.timer);
-      if (message.error) request.reject(message.error); else request.done(message.result);
-    }
-  };
-  function call(method, params = {}) {
-    return new Promise((done, reject) => {
-      const id = ++sequence;
-      const timer = setTimeout(() => { pending.delete(id); reject(new Error("Desktop debugger timeout: " + method)); }, 5000);
-      pending.set(id, { done, reject, timer }); socket.send(JSON.stringify({ id, method, params }));
-    });
-  }
-  async function evaluate(expression) {
-    const result = await call("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
-    if (result.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails));
-    return result.result.value;
-  }
-  async function wait(expression) {
-    for (let attempt = 0; attempt < 100; attempt++) { if (await evaluate(expression)) return; await delay(100); }
-    throw new Error("Desktop UI did not become ready: " + expression);
-  }
-  await call("Runtime.enable"); await call("Page.enable");
+  pageDebugger = await desktopDebugger(page.webSocketDebuggerUrl);
+  const { call, evaluate, wait } = pageDebugger;
+  checkpoint = "initial-page";
   await wait("document.getElementById('source')?.textContent.includes('MOCK')");
   assert.equal(await evaluate("typeof require"), "undefined");
   assert.equal(await evaluate("typeof process"), "undefined");
@@ -99,6 +72,7 @@ try {
   const controlPage = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find((target) => target.url.endsWith("/startup.html"));
   assert.ok(controlPage, "Lifecycle control page exists");
   controlDebugger = await desktopDebugger(controlPage.webSocketDebuggerUrl);
+  await controlDebugger.wait("typeof window.desktopLifecycle !== 'undefined'");
   assert.equal(await evaluate("typeof window.desktopLifecycle"), "undefined");
   assert.equal(await controlDebugger.evaluate("typeof require"), "undefined");
   await controlDebugger.evaluate("window.desktopLifecycle.command('restart')");
@@ -112,15 +86,29 @@ try {
   ]);
   assert.equal(secondaryExit, 0);
   assert.equal((await readInstance(configPath))?.pid, record.pid);
-  await controlDebugger.evaluate("window.desktopLifecycle.command('restart')");
-  await controlDebugger.evaluate("void window.desktopLifecycle.command('wait').catch(() => {}); true");
-  try { await controlDebugger.wait(`window.desktopLifecycle.read().then(v => v.phase === 'running' && v.connection.pid !== ${record.pid})`); }
-  catch (error) { console.log(JSON.stringify(await controlDebugger.evaluate("window.desktopLifecycle.read()"))); throw error; }
-  assert.equal((await readInstance(configPath)).pid !== record.pid, true);
-  await call("Page.reload");
-  await wait("document.getElementById('source')?.textContent.includes('MOCK')");
+  for (let cycle = 0; cycle < 3; cycle++) {
+    checkpoint = `restart-${cycle + 1}`;
+    const previous = await readInstance(configPath);
+    let stopWatching;
+    let pausedDocument;
+    if (cycle === 0) {
+      // Hold the new document so refreshing during loadURL deterministically exercises the old CI race.
+      pausedDocument = new Promise((done) => { stopWatching = pageDebugger.on("Fetch.requestPaused", done); });
+      await call("Fetch.enable", { patterns: [{ resourceType: "Document", requestStage: "Request" }] });
+    }
+    await controlDebugger.evaluate("window.desktopLifecycle.command('restart')");
+    await controlDebugger.evaluate("void window.desktopLifecycle.command('wait').catch(() => {}); true");
+    await controlDebugger.wait(`window.desktopLifecycle.read().then(v => v.phase === 'running' && v.connection.pid !== ${previous.pid})`);
+    const origin = await controlDebugger.evaluate("window.desktopLifecycle.read().then(v => v.connection.url)");
+    if (pausedDocument) await Promise.race([pausedDocument, delay(10000, undefined, { ref: false }).then(() => { throw new Error("New document was not intercepted"); })]);
+    await call("Page.reload");
+    if (pausedDocument) { await call("Fetch.disable"); stopWatching(); }
+    // A running backend does not imply that its new renderer has finished loading or is visible.
+    await wait(`location.origin === ${JSON.stringify(origin)} && document.visibilityState === 'visible' && document.getElementById('source')?.textContent.includes('MOCK')`);
+    assert.equal(await controlDebugger.evaluate("window.desktopLifecycle.read().then(v=>v.code)"), null);
+  }
   assert.equal(await evaluate("(async () => (await (await fetch('/api/tasks')).json()).some(t => t.id === 'desktop-smoke'))()"), true);
-  assert.deepEqual(scriptErrors, []);
+  assert.deepEqual(pageDebugger.errors, []);
   assert.deepEqual(controlDebugger.errors, []);
   await call("Browser.close").catch(() => {});
   const code = await Promise.race([exited, delay(15000, undefined, { ref: false }).then(() => { throw new Error("Desktop did not finish graceful shutdown"); })]);
@@ -132,12 +120,14 @@ try {
     assert.ok(!appFiles.some((file) => /(^|[\\/])(node_modules|tests|\.local|\.runtime|\.git)([\\/]|$)|local\.json|\.sqlite|\.log$/.test(file)));
   }
   await writeFile(join(artifacts, "result.json"), JSON.stringify({ packaged, versions, nodeOnPath: false, source: result.source,
-    initiallyPaused: result.paused, singleInstance: true, controlledRestart: true, isolatedLifecycleBridge: true,
-    scriptErrors: scriptErrors.length, gracefulExit: true }, null, 2));
+    initiallyPaused: result.paused, singleInstance: true, controlledRestarts: 3, refreshDuringNavigation: true, isolatedLifecycleBridge: true,
+    scriptErrors: pageDebugger.errors.length, gracefulExit: true }, null, 2));
   console.log(JSON.stringify({ passed: true, packaged, versions, artifacts }));
+} catch (error) {
+  await desktopDiagnostics(artifacts, { checkpoint, error, page: pageDebugger, control: controlDebugger }).catch(() => {});
+  throw error;
 } finally {
-  for (const request of pending.values()) { clearTimeout(request.timer); request.reject(new Error("Desktop debugger closed")); }
-  socket?.close();
+  pageDebugger?.close();
   controlDebugger?.close();
   // Only owned test process handles are terminated if an assertion prevented normal shutdown.
   if (secondary && secondary.exitCode === null) secondary.kill();

@@ -10,3 +10,9 @@ export function isManagementNavigation(value: string, origin: string): boolean {
     return url.origin === origin && url.pathname === "/" && url.search === "" && !url.username && !url.password;
   } catch { return false; }
 }
+
+/** A refresh or replacement navigation can cancel loadURL without a backend failure. */
+export function isAbortedNavigation(error: unknown): boolean {
+  return typeof error === "object" && error !== null && ("code" in error && error.code === "ERR_ABORTED"
+    || "errno" in error && error.errno === -3);
+}

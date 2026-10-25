@@ -6,16 +6,24 @@ export async function desktopDebugger(url) {
   await new Promise((done, reject) => { socket.onopen = done; socket.onerror = reject; });
   let sequence = 0;
   const pending = new Map();
+  const listeners = new Map();
   const errors = [];
+  const disconnected = () => {
+    for (const request of pending.values()) { clearTimeout(request.timer); request.reject(new Error("Desktop debugger closed")); }
+    pending.clear();
+  };
+  socket.onclose = disconnected;
   socket.onmessage = ({ data }) => {
     const message = JSON.parse(data);
     if (message.method === "Runtime.exceptionThrown") errors.push(message.params.exceptionDetails.text);
+    for (const listener of listeners.get(message.method) ?? []) listener(message.params);
     const request = pending.get(message.id);
     if (!request) return;
     clearTimeout(request.timer); pending.delete(message.id);
     if (message.error) request.reject(new Error(JSON.stringify(message.error))); else request.done(message.result);
   };
   function call(method, params = {}) {
+    if (socket.readyState !== WebSocket.OPEN) return Promise.reject(new Error("Desktop debugger closed"));
     return new Promise((done, reject) => {
       const id = ++sequence;
       const timer = setTimeout(() => { pending.delete(id); reject(new Error("Desktop debugger timeout: " + method)); }, 5000);
@@ -36,9 +44,13 @@ export async function desktopDebugger(url) {
     throw new Error("Desktop UI did not become ready: " + expression);
   }
   function close() {
-    for (const request of pending.values()) { clearTimeout(request.timer); request.reject(new Error("Desktop debugger closed")); }
-    pending.clear(); socket.close();
+    disconnected(); listeners.clear(); socket.close();
+  }
+  function on(method, listener) {
+    const handlers = listeners.get(method) ?? new Set();
+    handlers.add(listener); listeners.set(method, handlers);
+    return () => { handlers.delete(listener); };
   }
   await call("Runtime.enable"); await call("Page.enable");
-  return { call, evaluate, wait, errors, close };
+  return { call, evaluate, wait, errors, close, on };
 }

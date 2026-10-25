@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { DesktopBackend } from "./backend.js";
 import { DesktopLifecycle } from "./lifecycle.js";
 import { desktopOptions, initializeDesktopProfile, type DesktopOptions } from "./profile.js";
-import { desktopWebPreferences, isManagementNavigation } from "./security.js";
+import { desktopWebPreferences, isAbortedNavigation, isManagementNavigation } from "./security.js";
 import { recoverInstance } from "../runtime/instance.js";
 import { AppError } from "../shared/errors.js";
 import { registerLifecycleControl } from "../adapters/electron/lifecycle-ipc.js";
@@ -37,21 +37,40 @@ function showMain() {
   if (window.isMinimized()) window.restore();
   window.show(); window.focus();
 }
+function presentManagement() {
+  const state = lifecycle.snapshot();
+  if (window && !window.isDestroyed() && state.phase === "running" && state.connection
+    && isManagementNavigation(window.webContents.getURL(), state.connection.url)
+    && !intent && !exiting && !uiCode) { showMain(); control?.hide(); }
+}
 function report(error: unknown) {
   uiCode = error instanceof AppError ? error.code : "DESKTOP_OPERATION_FAILED";
   showControl();
+}
+function loadManagement(url: string) {
+  loadedUrl = url;
+  const loading = ++navigation;
+  void window!.loadURL(url).then(() => {
+    if (loading === navigation) presentManagement();
+  }).catch((error: unknown) => {
+    if (loading !== navigation || lifecycle.snapshot().phase !== "running") return;
+    if (!isAbortedNavigation(error)) { report(error); return; }
+    // Refresh can target the previous committed page while the new endpoint is still loading.
+    // Reopen only the current verified management URL; this never restarts the backend or a task.
+    setImmediate(() => {
+      if (loading === navigation && lifecycle.snapshot().phase === "running" && lifecycle.snapshot().connection?.url === url && !exiting) {
+        loadManagement(url);
+      }
+    });
+  });
 }
 function changed(state: LifecycleState) {
   if (state.phase === "starting") { loadedUrl = ""; navigation++; }
   publish();
   if (state.phase === "running" && state.connection) {
     if (loadedUrl !== state.connection.url) {
-      loadedUrl = state.connection.url;
-      const loading = ++navigation;
       window!.setTitle(`Codex 任务助手${state.connection.owned ? "" : " · 已连接外部服务"}`);
-      void window!.loadURL(loadedUrl).then(() => {
-        if (loading === navigation && lifecycle.snapshot().phase === "running" && !intent && !exiting) { showMain(); control?.hide(); }
-      }).catch((error: unknown) => { if (loading === navigation && lifecycle.snapshot().phase === "running") report(error); });
+      loadManagement(state.connection.url);
     }
   } else if (["failed", "disconnected", "stopping", "stopped"].includes(state.phase)) {
     window?.hide();
@@ -150,6 +169,8 @@ async function main() {
     target.webContents.on("will-navigate", navigation); target.webContents.on("will-redirect", navigation);
   }
   window.on("close", (event) => { if (!allowQuit) { event.preventDefault(); void requestExit().catch(report); } });
+  window.webContents.on("did-finish-load", presentManagement);
+  window.webContents.on("did-stop-loading", presentManagement);
   control.on("close", (event) => {
     if (allowQuit) return;
     event.preventDefault();

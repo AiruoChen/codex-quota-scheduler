@@ -14,8 +14,8 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: '22'
           cache: npm
@@ -27,8 +27,8 @@ jobs:
   desktop:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: '22'
           cache: npm
@@ -37,7 +37,14 @@ jobs:
       - run: npm run package:desktop
       - run: node --experimental-sqlite scripts/smoke-desktop.mjs --packaged .release/desktop/CodexQuotaScheduler-win32-x64/CodexQuotaScheduler.exe
       - run: node --experimental-sqlite scripts/smoke-lifecycle.mjs --packaged .release/desktop/CodexQuotaScheduler-win32-x64/CodexQuotaScheduler.exe
-      - uses: actions/upload-artifact@v4
+      - name: Upload sanitized desktop diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: desktop-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .local/**/diagnostics.json
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v6
         with:
           name: CodexQuotaScheduler-win32-x64
           path: .release/desktop/CodexQuotaScheduler-win32-x64/

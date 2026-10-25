@@ -7,7 +7,7 @@ import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { DesktopBackend, backendEnvironment } from "../src/desktop/backend.js";
 import { desktopOptions, initializeDesktopProfile } from "../src/desktop/profile.js";
-import { desktopWebPreferences, isManagementNavigation } from "../src/desktop/security.js";
+import { desktopWebPreferences, isAbortedNavigation, isManagementNavigation } from "../src/desktop/security.js";
 import { loadConfig } from "../src/config/load.js";
 import { contactInstance, readInstance } from "../src/runtime/instance.js";
 
@@ -63,6 +63,14 @@ test("页面不具有 Node 权限，只允许准确管理页和页面内导航",
   assert.equal(isManagementNavigation(origin + "/#tasks", origin), true);
   for (const url of ["https://example.test/", origin + "/api/config", origin + "/?redirect=1", "file:///private", "http://user@127.0.0.1:8765/"]) {
     assert.equal(isManagementNavigation(url, origin), false);
+  }
+});
+
+test("刷新导致的导航中止不等于后台故障，连接失败仍须呈现", () => {
+  assert.equal(isAbortedNavigation({ code: "ERR_ABORTED", errno: -3 }), true);
+  assert.equal(isAbortedNavigation({ errno: -3 }), true);
+  for (const error of [null, "ERR_ABORTED", new Error("other"), { code: "ERR_CONNECTION_REFUSED", errno: -102 }]) {
+    assert.equal(isAbortedNavigation(error), false);
   }
 });
 

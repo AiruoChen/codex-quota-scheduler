@@ -7,6 +7,7 @@ import { ManagementService } from "../../management/service.js";
 import type { RuntimeLogger } from "../../runtime/log.js";
 import type { ShutdownMode } from "../../domain/lifecycle.js";
 import { browserModules } from "../../management/gui-assets.js";
+import { maskAccount } from "../../management/quota-display.js";
 
 export interface ServerOptions {
   port: number;
@@ -94,10 +95,15 @@ export async function serveManagement(service: ManagementService, options: Serve
           const runs = await store.runs.recent(50, Number(url.searchParams.get("offset") ?? 0));
           return reply(response, 200, runs.map(({ promptSnapshot: _prompt, output: _output, taskSnapshot, ...run }) => ({ ...run, name: taskSnapshot.name })));
         }
+        if (path === "/api/runs/page") return reply(response, 200, await store.runs.query({ search: url.searchParams.get("search") ?? "",
+          status: (url.searchParams.get("status") ?? "all") as import("../../domain/task.js").RunQuery["status"],
+          offset: Number(url.searchParams.get("offset") ?? 0), limit: Number(url.searchParams.get("limit") ?? 25) }));
         if (path === "/api/run") {
-          const run = await store.runs.get(id);
-          if (!run) throw new AppError("RUN_NOT_FOUND", "运行记录不存在。");
-          return reply(response, 200, { run, events: store.execution.events(id), recovery: (await service.recovery()).repository.events(id) });
+          const recovery = (await service.recovery()).repository;
+          const target = recovery.target(id);
+          return reply(response, 200, { run: target.run, events: store.execution.events(id), recovery: recovery.events(id),
+            cancelRequested: store.execution.cancelled(id),
+            origin: target.origin ? { account: maskAccount(target.origin.account.email), cliVersion: target.origin.cliVersion } : null });
         }
         if (path === "/api/config") return reply(response, 200, { active: service.config, saved: await new ConfigManager(service.configPath).show() });
         if (path === "/api/logs") return reply(response, 200, { text: options.logger.tail() });

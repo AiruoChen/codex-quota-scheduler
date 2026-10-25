@@ -891,3 +891,10 @@ dialog.task-editor { width:min(1020px, calc(100vw - 24px)); max-width:1020px }
 .task-editor textarea { font-family:Consolas,"Microsoft YaHei",monospace; min-height:220px; resize:vertical }
 .queue-item>div:first-child { min-width:0; overflow-wrap:anywhere }
 @media(max-width:720px) { .queue-item { flex-direction:column; align-items:flex-start } .filter-bar label { min-width:0; width:100% } }
+.copy-buffer { position:fixed; left:-10000px; top:0; width:1px; height:1px }
+pre.run-output { max-height:45vh; min-height:100px; overflow:auto; user-select:text; white-space:pre-wrap; overflow-wrap:anywhere }
+.attention-card { border-top:1px solid var(--line); padding:20px 0; overflow-wrap:anywhere }
+#run-detail { margin-top:18px }
+.view { scroll-margin-top:85px }
+#run-detail .panel-heading { flex-wrap:wrap; gap:10px }
+@media(max-width:720px) { .view { scroll-margin-top:125px } }

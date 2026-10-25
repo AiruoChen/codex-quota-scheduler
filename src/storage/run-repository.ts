@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Clock, RunRepository } from "../domain/ports.js";
-import type { RunUpdate, TaskRun, TaskStatus } from "../domain/task.js";
+import type { RunUpdate, TaskRun, TaskStatus, RunQuery, RunPage } from "../domain/task.js";
 import { AppError } from "../shared/errors.js";
 import type { Database } from "./database.js";
 import { definitionOf, promptHash, readStoredTask } from "./task-repository.js";
@@ -31,6 +31,21 @@ export function readRun(value: unknown): TaskRun {
 
 export class SqliteRunRepository implements RunRepository {
   constructor(private readonly db: Database, private readonly clock: Clock) {}
+
+  async query(query: RunQuery): Promise<RunPage> {
+    if (!Number.isSafeInteger(query.offset) || query.offset < 0 || !Number.isSafeInteger(query.limit) || query.limit < 1 || query.limit > 100
+      || query.search.length > 200 || query.status !== "all" && !Object.hasOwn(transitions, query.status)) throw new AppError("INVALID_ARGUMENT", "运行筛选或分页参数无效。");
+    const where = `(?='all' OR json_extract(data_json,'$.status')=?) AND
+      (instr(lower(id),lower(?))>0 OR instr(lower(task_id),lower(?))>0
+      OR instr(lower(json_extract(data_json,'$.taskSnapshot.name')),lower(?))>0
+      OR instr(lower(json_extract(data_json,'$.taskSnapshot.projectDir')),lower(?))>0)`;
+    const params = [query.status, query.status, query.search, query.search, query.search, query.search];
+    return this.db.transaction(() => ({ ...query,
+      total: Number(this.db.connection.prepare(`SELECT count(*) AS n FROM runs WHERE ${where}`).get(...params)!.n),
+      items: this.db.connection.prepare(`SELECT data_json FROM runs WHERE ${where} ORDER BY rowid DESC LIMIT ? OFFSET ?`).all(...params, query.limit, query.offset)
+        .map((row) => { const { promptSnapshot: _prompt, output: _output, taskSnapshot, ...run } = readRun(row.data_json); return { ...run, name: taskSnapshot.name, projectDir: taskSnapshot.projectDir }; }),
+    }));
+  }
 
   async create(taskId: string): Promise<TaskRun> {
     return this.db.transaction(() => this.insert(taskId));

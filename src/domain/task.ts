@@ -59,6 +59,9 @@ export interface TaskRevision {
 
 export interface TaskQuery { search: string; enabled: "all" | "enabled" | "disabled"; offset: number; limit: number }
 export interface TaskPage { items: Omit<StoredTask, "promptSnapshot">[]; total: number; offset: number; limit: number }
+export type RunSummary = Omit<TaskRun, "promptSnapshot" | "output" | "taskSnapshot"> & { name: string; projectDir: string };
+export interface RunQuery { search: string; status: "all" | TaskStatus; offset: number; limit: number }
+export interface RunPage { items: RunSummary[]; total: number; offset: number; limit: number }
 
 export interface RunUpdate {
   status: TaskStatus;

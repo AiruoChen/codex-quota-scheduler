@@ -200,3 +200,8 @@ ManagementService.state 提供 quota-display 展示模型及准确执行权关�
 StateStore 合并并发查询并以服务端时间锚推进有效期；离线或到期先使额度未知，不能生成刷新事件。
 手动查询请求合并到现有 ContinuousQuotaMonitor，仍保留退避、事务检查点及刷新去重；停止监控后不由页面恢复循环。
 界面操作、模块边界及验收见 DESKTOP-GUI.md。
+
+运行历史分页通过 RunRepository.query 在 SQLite 执行参数化过滤，HTTP 只返回元数据。
+SelectedResource 合并当前详情读取并隔离旧选择响应，run-detail 保留选择、展开状态与阅读位置，clipboard 只提供用户发起的文本复制。
+recovery-model 提供问题说明，recovery 页面复用原检查、只读核对、事务应用与人工确认接口；没有新增远端恢复协议或自动修复入口。
+只读核对摘要属于当前后台会话，永久恢复审计仍由既有仓储保存。详见 DESKTOP-RUNS-RECOVERY.md。

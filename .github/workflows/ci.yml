@@ -35,8 +35,10 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: node node_modules/electron/install.js
       - run: npm run package:desktop
+      - run: node scripts/package-installer.mjs
       - run: node --experimental-sqlite scripts/smoke-desktop.mjs --packaged .release/desktop/CodexQuotaScheduler-win32-x64/CodexQuotaScheduler.exe
       - run: node --experimental-sqlite scripts/smoke-lifecycle.mjs --packaged .release/desktop/CodexQuotaScheduler-win32-x64/CodexQuotaScheduler.exe
+      - run: node --experimental-sqlite scripts/smoke-installer.mjs --package .release/desktop/CodexQuotaScheduler-win32-x64
       - name: Upload sanitized desktop diagnostics on failure
         if: failure()
         uses: actions/upload-artifact@v6
@@ -48,5 +50,7 @@ jobs:
       - uses: actions/upload-artifact@v6
         with:
           name: CodexQuotaScheduler-win32-x64
-          path: .release/desktop/CodexQuotaScheduler-win32-x64/
+          path: |
+            .release/desktop/CodexQuotaScheduler-win32-x64/
+            .release/installer/
           if-no-files-found: error

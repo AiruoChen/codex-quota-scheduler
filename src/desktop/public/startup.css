@@ -19,3 +19,7 @@ section label { display:block; margin:10px 0 }
 #notification-history article { border-top:1px solid #dce2ea; padding:14px 0 }
 #notification-history article p { margin:4px 0 }
 #notification-history small { display:block; color:#5b6777; margin-bottom:8px }
+.paths { white-space:pre-wrap; overflow-wrap:anywhere; font-size:13px; }
+select { width:100%; padding:8px; font:inherit; }
+#data-preview { padding:12px; background:#e8edf4; border-radius:8px; margin:14px 0; }
+#data-result { color:#3749a4; }

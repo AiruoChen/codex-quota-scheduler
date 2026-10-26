@@ -9,7 +9,7 @@ import { desktopRequest } from "../adapters/http/desktop-protocol.js";
 import type { FeedRequest, DesktopFeed } from "../domain/notifications.js";
 
 export type { DesktopConnection } from "../domain/lifecycle.js";
-export interface BackendLaunch { executable: string; entry: string; electron: boolean; timeoutMs?: number }
+export interface BackendLaunch { executable: string; entry: string; electron: boolean; timeoutMs?: number; beforeStart?(): Promise<void> }
 
 /** Uses the same executable in Node mode; inherited mode also supports npm Codex launchers. */
 export function backendEnvironment(base: NodeJS.ProcessEnv, electron: boolean): NodeJS.ProcessEnv {
@@ -32,6 +32,7 @@ export class DesktopBackend implements BackendSession {
   start(): Promise<DesktopConnection> { return this.starting ??= this.connect(); }
 
   private async connect(): Promise<DesktopConnection> {
+    await this.launch.beforeStart?.();
     const existing = await readInstance(this.configPath);
     if (existing) {
       if (localProcesses.inspect(existing.pid) === "dead") throw new AppError("RUNTIME_STALE", "服务进程已退出，请先显式核对服务记录。");

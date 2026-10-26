@@ -24,5 +24,15 @@
     <label><input id="quota-notifications-enabled" type="checkbox">通知完整查询已确认的额度刷新</label>
     <h3>最近通知（最多 50 条）</h3><div id="notification-history" aria-live="polite"></div>
   </section>
-</main><script type="module" src="../control-renderer.js"></script></body>
+  <section id="data-management" aria-label="安装与数据迁移"><h2>安装与数据迁移</h2>
+    <p id="data-location" class="paths"></p>
+    <p>备份、导入与切换前须停止后台。导入会创建新的数据副本，不合库、不覆盖旧项目；已有快照、审计和遗留执行权保持原样，导入后队列暂停。</p>
+    <label><input id="data-confirm" type="checkbox">我已核对范围：停止会暂停派发并等待当前任务落盘；导入/切换不会自动执行；旧项目须保持停止，避免两份数据重复派发。</label>
+    <div class="actions"><button data-transfer="stop">停止自有后台并等待落盘</button><button data-transfer="backup">创建完整数据备份</button><button data-transfer="preview">选择旧配置 / 备份并预检…</button></div>
+    <div id="data-preview" hidden><h3>导入预检</h3><p id="data-preview-detail" class="paths"></p><button id="data-commit" data-transfer="commit">确认导入新副本并切换（不启动）</button></div>
+    <p id="data-backup" class="paths"></p><label>保留的数据配置 <select id="data-profiles"></select></label><button data-transfer="switch">切换所选配置（不启动）</button>
+    <h3>手动升级与卸载</h3><p>准备升级将等待自有后台完成、创建备份后退出。再手动运行新安装包；安装器不会强杀任务。卸载默认保留用户数据、项目及 Codex 登录目录。</p>
+    <button data-transfer="prepare-upgrade">备份并安全退出，准备升级</button><p id="data-result" role="status"></p>
+  </section>
+</main><script type="module" src="../control-renderer.js"></script><script type="module" src="../data-renderer.js"></script></body>
 </html>

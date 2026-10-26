@@ -22,7 +22,7 @@ for (const path of files) {
   await cp(join(root, path), join(stage, path));
 }
 await writeFile(join(stage, "package.json"), JSON.stringify({ name: source.name, version: source.version, private: true,
-  description: source.description, type: "module", main: "dist/src/desktop/main.js" }, null, 2) + "\n");
+  description: source.description, type: "module", main: source.main }, null, 2) + "\n");
 // Stage contains only current runtime files, no dev dependencies or personal data. Do not overwrite a package in use.
 const paths = await packager({ dir: stage, out: output, name: "CodexQuotaScheduler", executableName: "CodexQuotaScheduler",
   platform: "win32", arch: "x64", electronVersion: electron.version, asar: false, prune: false, overwrite: false,

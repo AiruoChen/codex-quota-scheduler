@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile, readdir } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -23,7 +23,7 @@ const artifacts = await mkdtemp(join(root, ".local/lifecycle-acceptance-"));
 const results = [];
 for (const [scenario, choice, expected] of [["lifecycle-success", "wait", "succeeded"], ["hang", "cancel", "cancelled"],
   ["cancel-unconfirmed", "escalate", "needs_attention"], ["external", "detach", "running"], ["external-stop", "confirmed-stop", "stopped"],
-  ["startup-error", "retry", "running"], ["tray-complete", "background", "succeeded"]]) {
+  ["startup-error", "retry", "running"], ["tray-complete", "background", "succeeded"], ["upgrade-backup", "upgrade", "succeeded"]]) {
   const profile = join(artifacts, scenario);
   const options = desktopOptions([], profile);
   await initializeDesktopProfile(options);
@@ -33,7 +33,7 @@ for (const [scenario, choice, expected] of [["lifecycle-success", "wait", "succe
     const manager = new ConfigManager(options.configPath);
     await manager.set("provider", "codex");
     await manager.set("codex.executable", executable);
-    await manager.set("codex.args", [join(root, "tests/fixtures/fake-execution.mjs"), "--scenario", scenario === "tray-complete" ? "lifecycle-success" : scenario, "--trace", trace, "--project", profile]);
+    await manager.set("codex.args", [join(root, "tests/fixtures/fake-execution.mjs"), "--scenario", ["tray-complete", "upgrade-backup"].includes(scenario) ? "lifecycle-success" : scenario, "--trace", trace, "--project", profile]);
   }
   if (scenario === "startup-error") await writeFile(options.configPath, "broken-config");
   const owner = scenario.startsWith("external") ? new DesktopBackend(options.configPath, {
@@ -99,7 +99,10 @@ for (const [scenario, choice, expected] of [["lifecycle-success", "wait", "succe
         for(let i=0;i<100;i++){const state=await(await fetch('/api/state')).json();const runId=state.jobs.find(item=>item.id===job.id)?.runId;if(runId){const detail=await(await fetch('/api/run?id='+encodeURIComponent(runId))).json();if(detail.run.turnId)return runId}await new Promise(done=>setTimeout(done,25))}throw new Error('Fixture turn did not start');
       })()`);
       await control.evaluate("window.desktopLifecycle.command('status')");
-      if (scenario === "tray-complete") {
+      if (scenario === "upgrade-backup") {
+        await control.evaluate("void window.desktopData.action('prepare-upgrade',undefined,true).catch(()=>{});true");
+        await control.wait("window.desktopLifecycle.read().then(v=>v.phase==='stopping' && v.mode==='wait')");
+      } else if (scenario === "tray-complete") {
         const pid = (await readInstance(options.configPath)).pid;
         await control.evaluate("window.desktopLifecycle.command('show')");
         await closeWindow(page, child.pid);
@@ -135,7 +138,8 @@ for (const [scenario, choice, expected] of [["lifecycle-success", "wait", "succe
       try { assert.equal((await store.runs.get(runId))?.status, expected); } finally { store.close(); }
       const requests = await readFile(trace, "utf8");
       assert.equal(requests.split('"method":"turn/start"').length - 1, 1);
-      if (choice === "wait" || choice === "background") assert.ok(!requests.includes('"method":"turn/interrupt"'));
+      if (["wait", "background", "upgrade"].includes(choice)) assert.ok(!requests.includes('"method":"turn/interrupt"'));
+      if (choice === "upgrade") assert.ok((await readdir(join(profile, "backups"))).some((name) => name.startsWith("manual-")));
     }
     if (owner) {
       assert.equal(await Promise.race([exited, delay(15000, undefined, { ref: false }).then(() => { throw new Error("External detach timeout"); })]), 0);

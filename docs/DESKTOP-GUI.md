@@ -32,7 +32,7 @@
 计时、前端刷新、读取状态均不能生成刷新事件或自行认定额度恢复，事件与可用性仍以核心服务为准。
 
 任务与队列已补齐编辑器、目录选择、筛选及预览，见 [任务与队列](DESKTOP-TASKS-QUEUE.md)。记录分页、输出复制与异常处理见 [运行记录与异常处理](DESKTOP-RUNS-RECOVERY.md)。配置和诊断向导继续分块实施。
-关闭窗口默认隐藏到托盘，显式退出沿用后台生命周期流程；[托盘与通知](DESKTOP-TRAY-NOTIFICATIONS.md)已实现，安装迁移尚待开发。
+关闭窗口默认隐藏到托盘，显式退出沿用后台生命周期流程；[托盘与通知](DESKTOP-TRAY-NOTIFICATIONS.md)已实现，[安装与数据迁移](DESKTOP-INSTALL-MIGRATION.md)已实现。
 
 ## 模块边界
 

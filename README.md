@@ -35,6 +35,7 @@ Windows PowerShell 若限制执行 npm.ps1，请使用上面的 npm.cmd；其他
 任务管理已提供筛选分页、宽编辑区、桌面目录选择、版本冲突草稿保留及入队预览；队列展示快照顺序与后台等待原因。见 [任务与队列](docs/DESKTOP-TASKS-QUEUE.md)。
 运行记录支持服务端筛选分页、输出/快照复制和保留阅读位置；异常页提供检查建议、准确回合核对及显式处理。见 [运行记录与异常处理](docs/DESKTOP-RUNS-RECOVERY.md)。
 关闭窗口默认留在托盘，后台继续运行；托盘支持打开、状态、暂停派发和安全退出。通知提供脱敏文案、持久化去重、偏好和本地记录。见 [托盘与通知](docs/DESKTOP-TRAY-NOTIFICATIONS.md)。
+已提供 Windows 当前用户安装包：`npm.cmd run package:installer`。数据管理支持一致性备份、旧数据导入为新副本、配置切换和升级准备；卸载保留用户数据。见 [安装与数据迁移](docs/DESKTOP-INSTALL-MIGRATION.md)。
 
 ```powershell
 npm.cmd run ui
@@ -228,8 +229,8 @@ docs/              需求、架构和分阶段开发路线
 
 ## 开发顺序
 
-托盘与原生通知已完成；后续推进设置帮助增强、安装迁移及发布验收，具体任务见 [开发路线](docs/ROADMAP.md)。
-桌面客户端的页面设计、安装部署、数据迁移与分块验收草案见 [桌面客户端需求](docs/DESKTOP-CLIENT-REQUIREMENTS.md)；桌面外壳、便携目录、托盘与通知已实现，安装器待开发。
+托盘、通知、安装包与数据迁移已完成；后续推进设置帮助增强及发布验收，具体任务见 [开发路线](docs/ROADMAP.md)。
+桌面客户端的页面设计、安装部署、数据迁移与分块验收草案见 [桌面客户端需求](docs/DESKTOP-CLIENT-REQUIREMENTS.md)；桌面外壳、便携目录、托盘、通知及安装迁移已实现，正式签名与干净系统验收待完成。
 整体职责与数据流见 [架构说明](docs/ARCHITECTURE.md)，产品边界见 [需求清单](docs/REQUIREMENTS.md)。
 
 异常检测、显式本地修复与准确回合结果核对已接通；证据不足的记录继续保留 needs_attention。

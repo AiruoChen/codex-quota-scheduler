@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { copyFile, open, readFile, readdir, rename, writeFile, realpath } from "node:fs/promises";
+import { copyFile, open, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { join, resolve, dirname, basename } from "node:path";
 import { loadConfig } from "../config/load.js";
 import { ConfigManager } from "../config/manage.js";
@@ -13,7 +13,7 @@ import { migrations } from "../storage/database.js";
 import { scanRecovery } from "../storage/recovery-repository.js";
 import { loadTasks } from "../tasks/load.js";
 import type { DesktopOptions } from "./profile.js";
-import { atomicDataFile, dataLock, exists, managedDirectory, previousJson, saveDataJson } from "./data-files.js";
+import { assertDataPath, atomicDataFile, dataLock, exists, managedDirectory, previousJson, saveDataJson } from "./data-files.js";
 
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const checksum = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
@@ -88,10 +88,8 @@ export class DesktopDataTransfer {
     } finally { this.operation = false; this.changed(); }
   }
   private async source(configPath: string) {
-    const canonical = await realpath(configPath), normalized = resolve(configPath);
-    if ((process.platform === "win32" ? canonical.toLowerCase() !== normalized.toLowerCase() : canonical !== normalized)) {
-      throw new AppError("MIGRATION_PATH", "请选择原配置的实际路径，不通过符号链接或目录联接迁移。");
-    }
+    // Inspect reparse points directly. realpath string equality incorrectly rejects Windows 8.3 aliases.
+    await assertDataPath(configPath);
     await noService(configPath); await verifyBundle(configPath, this.version);
     const config = await loadConfig(configPath);
     if (config.storage.databasePath === ":memory:") throw new AppError("MIGRATION_DATABASE", "内存数据库不能迁移，请选择持久化数据。");

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, open, readFile, rename, unlink, lstat, realpath } from "node:fs/promises";
+import { mkdir, open, readFile, rename, unlink, lstat } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { AppError } from "../shared/errors.js";
 
@@ -27,16 +27,18 @@ export async function dataLock<T>(path: string, action: () => Promise<T>): Promi
 export async function saveDataJson(path: string, value: unknown): Promise<void> { await atomicDataFile(path, JSON.stringify(value, null, 2) + "\n"); }
 
 /** Reject redirections in all existing ancestors before writing private managed data. */
-export async function managedDirectory(path: string): Promise<void> {
-  const target = resolve(path);
-  let cursor = target;
+export async function assertDataPath(path: string): Promise<void> {
+  let cursor = resolve(path);
   for (;;) {
     try { if ((await lstat(cursor)).isSymbolicLink()) throw new AppError("MIGRATION_PATH", "数据目录不能通过符号链接或目录联接重定向。"); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
     const parent = dirname(cursor); if (parent === cursor) break; cursor = parent;
   }
-  await mkdir(target, { recursive: true, mode: 0o700 });
-  if ((await realpath(target)).toLowerCase() !== target.toLowerCase()) throw new AppError("MIGRATION_PATH", "数据目录无法验证。");
+}
+export async function managedDirectory(path: string): Promise<void> {
+  await assertDataPath(path);
+  await mkdir(resolve(path), { recursive: true, mode: 0o700 });
+  await assertDataPath(path);
 }
 export async function previousJson(path: string): Promise<unknown | null> {
   if (!await exists(path)) return null;

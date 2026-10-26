@@ -89,15 +89,17 @@ test("预检后数据或配置变化拒绝提交，现有目标不覆盖，不�
 test("活动、未知进程与服务记录阻止导入；遗留的已死执行权原样保留", async () => {
   const e = await setup();
   try {
-    const db = new DatabaseSync(e.config.storage.databasePath);
-    db.prepare("INSERT INTO execution_lock VALUES(1,?,?,0,1)").run(e.run.id, process.pid);
-    await assert.rejects(e.manager.preview(e.source.configPath), { code: "MIGRATION_SOURCE_ACTIVE" });
-    db.exec("UPDATE execution_lock SET owner_pid=0");
-    await assert.rejects(e.manager.preview(e.source.configPath), { code: "MIGRATION_SOURCE_ACTIVE" });
     // Find an unallocated PID without assuming a process can be safely killed.
     let dead = 2147483647;
     for (;;) { try { process.kill(dead, 0); dead--; } catch (error) { if ((error as NodeJS.ErrnoException).code === "ESRCH") break; dead--; } }
-    db.prepare("UPDATE execution_lock SET owner_pid=?").run(dead); db.close();
+    const db = new DatabaseSync(e.config.storage.databasePath);
+    try {
+      db.prepare("INSERT INTO execution_lock VALUES(1,?,?,0,1)").run(e.run.id, process.pid);
+      await assert.rejects(e.manager.preview(e.source.configPath), { code: "MIGRATION_SOURCE_ACTIVE" });
+      db.exec("UPDATE execution_lock SET owner_pid=0");
+      await assert.rejects(e.manager.preview(e.source.configPath), { code: "MIGRATION_SOURCE_ACTIVE" });
+      db.prepare("UPDATE execution_lock SET owner_pid=?").run(dead);
+    } finally { db.close(); }
     const instance = await claimInstance(e.source.configPath);
     await assert.rejects(e.manager.preview(e.source.configPath), { code: "MIGRATION_SOURCE_ACTIVE" }); await instance.release();
     const preview = await e.manager.preview(e.source.configPath); await e.manager.commit(preview.token);

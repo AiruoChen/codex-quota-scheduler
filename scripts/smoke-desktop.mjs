@@ -138,7 +138,13 @@ try {
     scriptErrors: pageDebugger.errors.length, gracefulExit: true }, null, 2));
   console.log(JSON.stringify({ passed: true, packaged, versions, artifacts }));
 } catch (error) {
-  await desktopDiagnostics(artifacts, { checkpoint, error, page: pageDebugger, control: controlDebugger }).catch(() => {});
+  const diagnostic = await desktopDiagnostics(artifacts, { checkpoint, error, page: pageDebugger, control: controlDebugger }).catch(() => null);
+  const message = error instanceof Error ? error.message : "";
+  const reason = message.startsWith("Desktop UI did not become ready:") ? "UI_NOT_READY"
+    : message.startsWith("Desktop debugger timeout:") ? "DEBUGGER_TIMEOUT" : error?.code === "ERR_ASSERTION" ? "ASSERTION_FAILED" : "SMOKE_CHECK_FAILED";
+  console.log(JSON.stringify({ smokeFailure: { checkpoint, reason,
+    visibility: diagnostic?.management?.visibility === "visible" ? "visible" : diagnostic?.management?.visibility === "hidden" ? "hidden" : "unknown",
+    focused: diagnostic?.management?.focused === true } }));
   throw error;
 } finally {
   pageDebugger?.close();

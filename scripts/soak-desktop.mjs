@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
-import { mkdtemp, mkdir, open, readFile } from "node:fs/promises";
+import { access, mkdtemp, mkdir, open, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { root } from "./lib/runtime-files.mjs";
@@ -106,6 +106,10 @@ try {
   initialBytes = lastBytes = await memory(); peakBytes = initialBytes;
   started = performance.now(); wall = Date.now(); let previous = started, sampledMemory = started;
   while (!interrupted && performance.now() - started < seconds * 1000) {
+    if (process.env.CQS_ACCEPTANCE_STOP_FILE) {
+      try { await access(process.env.CQS_ACCEPTANCE_STOP_FILE); interrupted = true; break; }
+      catch (error) { if (error.code !== "ENOENT") throw error; }
+    }
     const now = performance.now(); maxGapMs = Math.max(maxGapMs, Math.round(now - previous)); previous = now;
     assert.equal(child.exitCode, null);
     const state = await control.evaluate("window.desktopLifecycle.read().then(v=>({phase:v.phase,operations:v.activity?.activeOperations,notices:v.desktop.notices.length,hidden:v.desktop.hidden}))");
@@ -114,6 +118,8 @@ try {
     const quotaState = await page.evaluate("fetch('/api/state').then(r=>r.json()).then(s=>({provider:s.provider,observedAt:s.monitor?.observedAt,errorCode:s.monitor?.errorCode}))");
     assert.equal(quotaState.provider, "codex"); assert.equal(quotaState.errorCode, null);
     assert.ok(typeof quotaState.observedAt === "string" && Number.isFinite(Date.parse(quotaState.observedAt)));
+    const quotaAge = Date.now() - Date.parse(quotaState.observedAt);
+    assert.ok(quotaAge >= 0 && quotaAge <= 10000, "continuous quota monitoring stays fresh");
     if (quotaState.observedAt !== lastMonitorAt) { monitorUpdates++; lastMonitorAt = quotaState.observedAt; }
     const auditValue = await auditState();
     submissions = auditValue.count; uniqueRuns = auditValue.unique;

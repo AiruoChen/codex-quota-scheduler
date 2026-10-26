@@ -37,8 +37,12 @@ export async function runsRecoveryAcceptance(page, directory) {
     await evaluate("getSelection().removeAllRanges()");
     await wait("document.getElementById('run-output').textContent.includes('NEW FIXTURE OUTPUT')");
     assert.equal(await evaluate("document.getElementById('run-output').scrollTop"),100);
-    await call("Runtime.evaluate",{expression:"[...document.querySelectorAll('#run-detail button')].find(b=>b.textContent==='复制输出').click()",userGesture:true});
-    await wait("document.getElementById('notice').textContent==='输出已复制。'");
+    // Model the foreground user gesture without depending on the Windows runner's active desktop.
+    await call("Emulation.setFocusEmulationEnabled", { enabled: true });
+    try {
+      await call("Runtime.evaluate",{expression:"[...document.querySelectorAll('#run-detail button')].find(b=>b.textContent==='复制输出').click()",userGesture:true});
+      await wait("document.getElementById('notice').textContent==='输出已复制。'");
+    } finally { await call("Emulation.setFocusEmulationEnabled", { enabled: false }); }
     fixture.cancelRequested=true;await evaluate("document.getElementById('run-refresh').click()");
     await wait("document.getElementById('run-detail').textContent.includes('尚未确认取消')");
     assert.equal(await evaluate("[...document.querySelectorAll('#run-detail button')].find(b=>b.textContent==='等待取消确认').disabled"),true);

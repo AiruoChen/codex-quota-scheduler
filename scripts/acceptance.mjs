@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
-import { join, dirname, resolve } from "node:path";
+import { join, dirname } from "node:path";
 import { release as osRelease } from "node:os";
 import { root } from "./lib/runtime-files.mjs";
 import { runAcceptanceCommand } from "./lib/acceptance-command.mjs";
+import { readHarnessResult } from "./lib/acceptance-artifacts.mjs";
 import { generatedDirectory, inspectInstaller, inspectPayload, jsonFile, sourceIdentity, verifyPayloadHashes } from "./lib/release-files.mjs";
 import { acceptanceMarkdown, assembleBundle } from "./lib/release-bundle.mjs";
 import { automatedChecks, readAcceptance } from "../dist/src/domain/release.js";
@@ -25,14 +26,14 @@ const report = () => readAcceptance({ format: 1, version: pkg.version, ...source
   environment: { platform: process.platform, arch: process.arch, node: process.versions.node, os: osRelease() }, checks, soak });
 const npm = process.env.npm_execpath ?? join(dirname(process.execPath), "node_modules/npm/bin/npm-cli.js");
 let current;
-async function step(id, command, args, count) {
-  current = id; const result = await runAcceptanceCommand(id, command, args, join(logs, id + ".log"));
-  Object.assign(checks.find((check) => check.id === id) ?? {}, { status: "passed", durationMs: result.durationMs, count: count ?? result.count });
+async function step(id, command, args, settings = {}) {
+  current = id; const result = await runAcceptanceCommand(id, command, args, join(logs, id + ".log"), settings);
+  Object.assign(checks.find((check) => check.id === id) ?? {}, { status: "passed", durationMs: result.durationMs, count: result.count });
   console.log(JSON.stringify({ step: id, passed: true })); return result;
 }
 try {
   await step("check", process.execPath, [npm, "run", "check"]);
-  await step("unit", process.execPath, [npm, "test"]);
+  await step("unit", process.execPath, [npm, "test"], { requireTap: true });
   await step("demo", process.execPath, [npm, "run", "demo"]);
   await step("package", process.execPath, [npm, "run", "package:desktop", "--", "--output-name", name + "-desktop"]);
   const desktop = join(root, ".release", name + "-desktop/CodexQuotaScheduler-win32-x64");
@@ -45,16 +46,20 @@ try {
   await verifyPayloadHashes(desktop, installer.files);
   Object.assign(checks.find((check) => check.id === "privacy"), { status: "passed", durationMs: Math.round(performance.now() - privacyStart), count: privacy.files });
   const gui = await step("desktop", process.execPath, ["--experimental-sqlite", "scripts/smoke-desktop.mjs", "--packaged", join(desktop, "CodexQuotaScheduler.exe")]);
-  const guiReport = JSON.parse(await readFile(join(gui.summary.artifacts, "result.json"), "utf8"));
+  const guiReport = await readHarnessResult(gui.summary, "desktop-acceptance-");
   if (!guiReport.packaged || guiReport.scriptErrors !== 0 || !guiReport.gracefulExit || !guiReport.initiallyPaused) throw new Error("ACCEPTANCE_DESKTOP_INVALID");
   const lifecycle = await step("lifecycle", process.execPath, ["--experimental-sqlite", "scripts/smoke-lifecycle.mjs", "--packaged", join(desktop, "CodexQuotaScheduler.exe")]);
   if (!lifecycle.summary || lifecycle.summary.scenarios < 8) throw new Error("ACCEPTANCE_LIFECYCLE_INVALID");
+  const lifecycleReport = await readHarnessResult(lifecycle.summary, "lifecycle-acceptance-");
+  if (!lifecycleReport.packaged || lifecycleReport.protocolFixturesOnly !== true || !Array.isArray(lifecycleReport.results)
+    || lifecycleReport.results.length !== lifecycle.summary.scenarios || lifecycleReport.results.some((item) => item.passed !== true)) throw new Error("ACCEPTANCE_LIFECYCLE_INVALID");
   checks.find((check) => check.id === "lifecycle").count = lifecycle.summary.scenarios;
   const install = await step("installer", process.execPath, ["--experimental-sqlite", "scripts/smoke-installer.mjs", "--package", desktop]);
-  const installReport = JSON.parse(await readFile(join(install.summary.artifacts, "result.json"), "utf8"));
+  const installReport = await readHarnessResult(install.summary, "installer-acceptance-");
   if (installReport.realTasksSubmitted !== false || installReport.scriptErrors !== 0 || !installReport.uninstallPreservesData || !installReport.migrationSourceUnchanged) throw new Error("ACCEPTANCE_INSTALLER_INVALID");
-  const stability = await step("soak_smoke", process.execPath, ["--experimental-sqlite", "scripts/soak-desktop.mjs", "--package", desktop, "--installer", installerDir, "--seconds", String(seconds)]);
-  const measured = JSON.parse(await readFile(join(stability.summary.artifacts, "result.json"), "utf8"));
+  const stability = await step("soak_smoke", process.execPath, ["--experimental-sqlite", "scripts/soak-desktop.mjs", "--package", desktop, "--installer", installerDir, "--seconds", String(seconds)],
+    { timeoutMs: seconds * 1000 + 20 * 60 * 1000, cooperativeStop: true });
+  const measured = await readHarnessResult(stability.summary, "soak-acceptance-");
   if (measured.commit !== source.commit || measured.installerSha256 !== installer.sha256 || measured.version !== pkg.version) throw new Error("ACCEPTANCE_SOURCE_CHANGED");
   soak = measured;
   await verifyPayloadHashes(desktop, installer.files); await inspectInstaller(installerDir);
@@ -67,5 +72,7 @@ try {
 } catch (error) {
   const item = checks.find((check) => check.id === current); if (item) item.status = "failed";
   await jsonFile(join(output, "report.json"), report());
-  console.error(error instanceof Error && /^[A-Z0-9_:,]+$/.test(error.message) ? error.message : "ACCEPTANCE_FAILED"); process.exitCode = 1;
+  const code = error instanceof Error && /^[A-Z0-9_:,]+$/.test(error.message) ? error.message : "ACCEPTANCE_FAILED";
+  console.error(error?.smokeFailure ? JSON.stringify({ error: code, smokeFailure: error.smokeFailure }) : code);
+  process.exitCode = 1;
 }

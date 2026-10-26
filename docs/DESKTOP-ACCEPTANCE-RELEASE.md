@@ -50,10 +50,8 @@ node scripts/verify-release.mjs --directory .release/candidate-001/bundle --chan
 在具备代码签名证书的独立 Windows x64 环境中，构建并完成连续 24 小时验收：
 
 ```powershell
-# 以下三个值只放在可信本机环境或受保护密钥库，不写入命令历史、源码或日志。
-$env:CQS_SIGNING_PFX_BASE64 = '<secret>'
-$env:CQS_SIGNING_PASSWORD = '<secret>'
-$env:CQS_SIGNING_THUMBPRINT = '<40-digit hex>'
+# 先通过受保护凭据存储注入 CQS_SIGNING_PFX_BASE64、
+# CQS_SIGNING_PASSWORD、CQS_SIGNING_THUMBPRINT；不要在终端明文赋值。
 node --experimental-sqlite scripts/acceptance.mjs --output-name stable-001 --soak-seconds 86400 --sign yes
 node scripts/verify-release.mjs --directory .release/stable-001/bundle --channel stable --manual .local/release-manual.json
 ```

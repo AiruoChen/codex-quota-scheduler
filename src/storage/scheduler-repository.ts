@@ -3,7 +3,7 @@ import type { Clock } from "../domain/ports.js";
 import type { MonitorUpdate } from "../domain/monitor.js";
 import type { DispatchDecision, SchedulerRepository, SchedulerStatus, SchedulerTrigger } from "../domain/scheduler.js";
 import type { TaskRun } from "../domain/task.js";
-import { evaluateQuota } from "../domain/quota-policy.js";
+import { evaluateQuota, hasQuotaIdentity } from "../domain/quota-policy.js";
 import { digest, type MonitorOptions } from "../monitor/recognize.js";
 import { AppError } from "../shared/errors.js";
 import type { Database } from "./database.js";
@@ -149,7 +149,7 @@ export class SqliteSchedulerRepository implements SchedulerRepository {
       if (state.errorCode || state.availability.status !== "available") return { action: "wait", reason: state.availability.reason };
       const eligibility = evaluateQuota(snapshot, this.policy, this.clock.now());
       if (eligibility.status !== "available") return { action: "wait", reason: eligibility.reason };
-      if (!state.identity || !snapshot.account || !snapshot.account.email && !snapshot.account.workspaceId) return { action: "wait", reason: "identity_unknown" };
+      if (!state.identity || !hasQuotaIdentity(snapshot.account)) return { action: "wait", reason: "identity_unknown" };
       if (this.trigger === "refresh" && !grant) return { action: "wait", reason: "awaiting_refresh" };
       const candidates = this.queued().filter((run) => ["queued", "waiting_quota"].includes(run.status))
         .sort((a, b) => b.taskSnapshot.priority - a.taskSnapshot.priority);

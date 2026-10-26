@@ -1,7 +1,7 @@
 import type { DesktopDataView } from "../domain/data-transfer.js";
 declare global {
   interface Window {
-    desktopData: { read(): Promise<DesktopDataView>; action(action: string, value?: string, confirmed?: boolean): Promise<void>; onFocus(listener: () => void): () => void };
+    desktopData: { read(): Promise<DesktopDataView>; openDirectory(): Promise<void>; action(action: string, value?: string, confirmed?: boolean): Promise<void>; onFocus(listener: () => void): () => void };
   }
 }
 const byId = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -54,6 +54,12 @@ for (const button of document.querySelectorAll<HTMLButtonElement>("[data-transfe
   });
 }
 byId<HTMLInputElement>("data-confirm").addEventListener("change", () => { if (current) render(current); });
+byId<HTMLButtonElement>("data-open-directory").addEventListener("click", () => {
+  const button = byId<HTMLButtonElement>("data-open-directory"); button.disabled = true;
+  void window.desktopData.openDirectory().then(() => { byId("data-result").textContent = "已请求在文件管理器中打开用户数据目录。"; })
+    .catch(() => { byId("data-result").textContent = "无法打开用户数据目录，请检查目录是否存在和系统文件管理器状态。"; })
+    .finally(() => { button.disabled = false; });
+});
 window.desktopData.onFocus(() => { byId("data-management").scrollIntoView(); void refresh(); });
 window.desktopLifecycle.onChange(() => { void refresh(); });
 void refresh();

@@ -7,11 +7,15 @@ import type { SqliteStore } from "../storage/sqlite-store.js";
 import { CodexExecutor } from "../adapters/codex/codex-executor.js";
 import type { QuotaSnapshot } from "../domain/quota.js";
 import { redact } from "../shared/redact.js";
+import { quotaStreamKey } from "../monitor/context.js";
+import { SqliteMonitorRepository } from "../storage/monitor-repository.js";
+import { MonitoredExecutionQuota } from "./quota-guard.js";
 
 export class ManualExecutionService {
   private readonly executor: TaskExecutor;
   constructor(private readonly config: AppConfig, private readonly store: SqliteStore, clock: Clock = systemClock, executor?: TaskExecutor) {
-    this.executor = executor ?? new CodexExecutor(config, clock);
+    this.executor = executor ?? new CodexExecutor(config, clock, new MonitoredExecutionQuota(
+      new SqliteMonitorRepository(store.database, quotaStreamKey(config), config, clock), config, clock));
   }
 
   async runTask(taskId: string, signal: AbortSignal, started?: (id: string) => void, expectedRevision?: number): Promise<TaskRun> {

@@ -6,6 +6,7 @@ export type DataAction = "stop" | "preview" | "commit" | "backup" | "switch" | "
 export function registerDataTransfer(window: BrowserWindow, page: string, callbacks: {
   view(): Promise<DesktopDataView>; action(action: DataAction, value?: string): Promise<void>;
   preview(path: string): Promise<void>;
+  openDirectory(): Promise<void>;
 }): void {
   const validate = (event: IpcMainInvokeEvent) => {
     if (window.isDestroyed() || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame || event.senderFrame.url !== page) {
@@ -13,6 +14,12 @@ export function registerDataTransfer(window: BrowserWindow, page: string, callba
     }
   };
   ipcMain.handle("desktop-data:read", async (event) => { validate(event); return callbacks.view(); });
+  ipcMain.handle("desktop-data:open-directory", async (event, ...args: unknown[]) => {
+    validate(event);
+    if (args.length) throw new AppError("INVALID_ARGUMENT", "打开数据目录不接受路径参数。");
+    try { await callbacks.openDirectory(); }
+    catch { throw new Error("DESKTOP_OPEN_DIRECTORY_FAILED"); }
+  });
   ipcMain.handle("desktop-data:action", async (event, action: unknown, value: unknown, confirmed: unknown) => {
     validate(event);
     try {
@@ -30,5 +37,7 @@ export function registerDataTransfer(window: BrowserWindow, page: string, callba
       throw new Error(error instanceof AppError ? error.code : "MIGRATION_FAILED");
     }
   });
-  window.once("closed", () => { ipcMain.removeHandler("desktop-data:read"); ipcMain.removeHandler("desktop-data:action"); });
+  window.once("closed", () => {
+    ipcMain.removeHandler("desktop-data:read"); ipcMain.removeHandler("desktop-data:action"); ipcMain.removeHandler("desktop-data:open-directory");
+  });
 }

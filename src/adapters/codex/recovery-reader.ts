@@ -7,6 +7,7 @@ import type { CodexOptions } from "./launcher.js";
 import { codexConnectionKey } from "./connection-key.js";
 import { connectCodex, readAccount } from "./session.js";
 import type { StdioRpcClient } from "./rpc-client.js";
+import { hasQuotaIdentity } from "../../domain/quota-policy.js";
 
 const unknown = (code: string): RemoteRecoveryResult => ({ kind: "unknown", code });
 function sameAccount(left: ExecutionOrigin["account"], right: ExecutionOrigin["account"]): boolean {
@@ -20,7 +21,7 @@ export class CodexRecoveryReader implements RecoveryReader {
     const { run, origin } = target;
     if (!origin) return unknown("ORIGIN_UNKNOWN");
     if (origin.connectionKey !== codexConnectionKey(this.options)) return unknown("CONNECTION_MISMATCH");
-    if (!origin.account.email && !origin.account.workspaceId) return unknown("ACCOUNT_UNKNOWN");
+    if (!hasQuotaIdentity(origin.account)) return unknown("ACCOUNT_UNKNOWN");
     if (!run.threadId || !run.turnId) return unknown("TURN_ID_UNKNOWN");
     const { client } = await connectCodex(this.options, signal);
     try {

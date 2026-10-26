@@ -207,3 +207,43 @@ test("旧模式仍有活动执行权时拒绝升级，数据目录联接不能�
     assert.deepEqual(await readdir(outside), []);
   } finally { await e.cleanup(); }
 });
+
+test("新版导入后尚未首次启动的活动配置拒绝降级，原数据和活动指针保持不变", async () => {
+  const e = await setup();
+  try {
+    const newer = new DesktopDataTransfer(e.target, "9.9.9");
+    const preview = await newer.preview(e.source.configPath); await newer.commit(preview.token);
+    const active = await selectedProfile(e.target.dataDir), config = await loadConfig(active);
+    const database = await readFile(config.storage.databasePath), pointer = await readFile(join(e.target.dataDir, "desktop-profile.json"));
+    const backups = await readdir(join(e.target.dataDir, "backups"));
+    const older = new DesktopDataTransfer({ ...e.target, configPath: active }, "0.3.0");
+    await assert.rejects(older.prepareStartup(), { code: "DESKTOP_DOWNGRADE" });
+    await assert.rejects(older.opened(), { code: "DESKTOP_DOWNGRADE" });
+    assert.deepEqual(await readFile(config.storage.databasePath), database);
+    assert.deepEqual(await readFile(join(e.target.dataDir, "desktop-profile.json")), pointer);
+    assert.deepEqual(await readdir(join(e.target.dataDir, "backups")), backups);
+    // A supported client can still open the exact same imported data.
+    await newer.prepareStartup(); await newer.opened();
+    await assert.rejects(older.prepareStartup(), { code: "DESKTOP_DOWNGRADE" });
+  } finally { await e.cleanup(); }
+});
+
+test("活动导入标记缺失或损坏时不能启动，也不能用旧客户端再次导入或切换", async () => {
+  const e = await setup();
+  try {
+    const newer = new DesktopDataTransfer(e.target, "9.9.9");
+    const preview = await newer.preview(e.source.configPath); await newer.commit(preview.token);
+    const imported = e.target.configPath, markerPath = join(dirname(imported), "profile.json"), marker = await readFile(markerPath);
+    const config = await loadConfig(imported), database = await readFile(config.storage.databasePath);
+    const older = new DesktopDataTransfer({ ...e.target }, "0.3.0");
+    await assert.rejects(older.preview(imported), { code: "DESKTOP_DOWNGRADE" });
+    await newer.switchProfile("default");
+    await assert.rejects(new DesktopDataTransfer({ ...e.target }, "0.3.0").switchProfile(preview.token), { code: "DESKTOP_DOWNGRADE" });
+    await writeFile(markerPath, JSON.stringify({ format: 1, clientVersion: "invalid" }));
+    await assert.rejects(new DesktopDataTransfer({ ...e.target, configPath: imported }, "9.9.9").prepareStartup(), { code: "MIGRATION_STATE_INVALID" });
+    await unlink(markerPath);
+    await assert.rejects(new DesktopDataTransfer({ ...e.target, configPath: imported }, "9.9.9").prepareStartup(), { code: "MIGRATION_STATE_INVALID" });
+    assert.deepEqual(await readFile(config.storage.databasePath), database);
+    await writeFile(markerPath, marker);
+  } finally { await e.cleanup(); }
+});

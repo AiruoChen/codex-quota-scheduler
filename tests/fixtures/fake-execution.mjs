@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
 import { appendFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { createInterface } from "node:readline";
 
 const value = (name) => { const index = process.argv.indexOf(name); return index < 0 ? undefined : process.argv[index + 1]; };
 const scenario = value("--scenario") ?? "success";
 const trace = value("--trace");
 if (process.argv.includes("--version")) { console.log("codex-cli 0.160.0-fixture"); process.exit(0); }
+const audit = value("--audit-file");
+const record = (event, key) => { if (audit) appendFileSync(audit, JSON.stringify({ event, pid: process.pid, ...(key ? { key } : {}) }) + "\n"); };
+record("spawn"); process.on("exit", () => record("exit"));
 assert.ok(process.argv.includes("app-server"));
 let initialized = false;
 let accountReads = 0;
@@ -55,6 +59,7 @@ input.on("line", (line) => {
     return;
   }
   if (message.method === "turn/start") {
+    record("submit", createHash("sha256").update(JSON.stringify(message.params.input)).digest("hex"));
     assert.equal(message.params.cwd, cwd);
     assert.equal(message.params.approvalPolicy, "on-request");
     assert.equal(message.params.sandboxPolicy.networkAccess, false);

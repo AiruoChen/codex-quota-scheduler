@@ -27,5 +27,19 @@ export function settingsView(context: UiContext) {
     });
   });
   $("refresh-logs").onclick = () => { void busy($<HTMLButtonElement>("refresh-logs"), logs); };
+  $("export-diagnostics").onclick = () => { void busy($<HTMLButtonElement>("export-diagnostics"), async () => {
+    const report = await api<{ format: number; createdAt: string }>("/api/diagnostics");
+    if (report.format !== 1 || !Number.isFinite(Date.parse(report.createdAt))) throw new Error("诊断数据格式无效。");
+    const blob = new Blob([JSON.stringify(report, null, 2) + "\n"], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    try {
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `codex-diagnostics-${report.createdAt.replace(/[:.]/g, "-")}.json`;
+      document.body.append(link);
+      link.click();
+      link.remove();
+    } finally { setTimeout(() => URL.revokeObjectURL(url), 1000); }
+  }); };
   return { load };
 }

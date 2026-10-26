@@ -34,5 +34,10 @@
     <h3>手动升级与卸载</h3><p>准备升级将等待自有后台完成、创建备份后退出。再手动运行新安装包；安装器不会强杀任务。卸载默认保留用户数据、项目及 Codex 登录目录。</p>
     <button data-transfer="prepare-upgrade">备份并安全退出，准备升级</button><p id="data-result" role="status"></p>
   </section>
+  <section aria-label="离线使用说明"><h2>离线使用说明</h2><p>后台连接失败时，此说明仍可阅读；连接后可在“设置与帮助”查看完整步骤。</p>
+    <details><summary>首次配置和入队</summary><p>点击“启动 / 重试连接”。首次可先用模拟额度体验；模拟模式不会执行真实任务。要接入真实 Codex，先安装并登录本机 CLI，在管理页校验保存真实连接配置，重启服务并重新查询额度。在“任务管理”保存任务并核对指令、目录和权限，明确加入队列；调度进程启动后还须手动恢复派发。</p></details>
+    <details><summary>暂停、取消与恢复</summary><p>“暂停派发”阻止领取下一项，当前任务可继续完成；请求取消后等待终态确认。结果不明时先保留记录，在“异常与恢复”只读核对原账户、原会话和准确回合；不得自动重发或猜测结果。重启后队列默认暂停。</p></details>
+    <details><summary>备份、升级和卸载</summary><p>在上方“安装与数据迁移”停止后台并等待结果落盘，再创建完整备份。导入旧配置先预检，明确确认后仅创建副本。升级前创建备份并安全退出，再运行新安装包。卸载默认保留个人数据、项目和 Codex 登录目录。</p></details>
+  </section>
 </main><script type="module" src="../control-renderer.js"></script><script type="module" src="../data-renderer.js"></script></body>
 </html>

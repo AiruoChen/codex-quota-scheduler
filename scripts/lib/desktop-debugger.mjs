@@ -1,7 +1,7 @@
 import { setTimeout as delay } from "node:timers/promises";
 
 /** Test-only CDP connection shared by development and packaged lifecycle smoke checks. */
-export async function desktopDebugger(url) {
+export async function desktopDebugger(url, { page = true } = {}) {
   const socket = new WebSocket(url);
   await new Promise((done, reject) => { socket.onopen = done; socket.onerror = reject; });
   let sequence = 0;
@@ -51,6 +51,6 @@ export async function desktopDebugger(url) {
     handlers.add(listener); listeners.set(method, handlers);
     return () => { handlers.delete(listener); };
   }
-  await call("Runtime.enable"); await call("Page.enable");
+  if (page) { await call("Runtime.enable"); await call("Page.enable"); }
   return { call, evaluate, wait, errors, close, on };
 }

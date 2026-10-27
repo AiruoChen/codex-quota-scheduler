@@ -183,7 +183,7 @@ code{font:0.9em/1.7 Consolas,"Cascadia Code",monospace;background:#eef3f4;paddin
 </ol>
 <div class="table-scroll" role="region" aria-label="对照表" tabindex="0"><table><thead><tr><th scope="col">表单项</th><th scope="col">练习时怎么填</th></tr></thead><tbody>
 <tr><td>任务名称</td><td>第一次练习：阅读项目</td></tr>
-<tr><td>任务 ID</td><td><code>first-check</code></td></tr>
+<tr><td>任务 ID</td><td>不用填；首次保存由后台生成，在高级标识里只读查看</td></tr>
 <tr><td>项目目录</td><td>点击“选择项目文件夹…”并选择刚才的文件夹</td></tr>
 <tr><td>优先级</td><td>保留 <code>10</code></td></tr>
 <tr><td>启用此任务</td><td>保持勾选</td></tr>
@@ -256,17 +256,21 @@ code{font:0.9em/1.7 Consolas,"Cascadia Code",monospace;background:#eef3f4;paddin
 <p>在“任务管理 → 新建任务”中填写：</p>
 <div class="table-scroll" role="region" aria-label="对照表" tabindex="0"><table><thead><tr><th scope="col">项目</th><th scope="col">怎么理解与填写</th></tr></thead><tbody>
 <tr><td>任务名称</td><td>给自己看的名称，例如“检查说明文档”</td></tr>
-<tr><td>任务 ID</td><td>程序识别任务用的唯一名字，例如 <code>readme-check</code>；建议使用英文字母、数字和短横线，保存后不能直接改 ID</td></tr>
-<tr><td>项目目录</td><td>Codex 工作的文件夹；优先使用“选择项目文件夹…”</td></tr>
+<tr><td>任务 ID</td><td>不用填写，后台自动生成；名称可以改，ID 保持不变</td></tr>
+<tr><td>新会话工作方式</td><td>选本地文件夹、已有 Codex 项目或无项目会话</td></tr>
+<tr><td>本次工作目录</td><td>本地模式自己选择；官方项目从已关联文件夹中确认，无项目只读模式由后台管理工作区</td></tr>
 <tr><td>指令</td><td>写清范围、预期结果，以及允许做哪些操作</td></tr>
 <tr><td>优先级</td><td>0 至 1000；数值越大，排队时越优先；不确定就填 10</td></tr>
 <tr><td>启用此任务</td><td>勾选后可作为可执行任务；停用不等于取消当前运行</td></tr>
-<tr><td>文件访问权限</td><td>“只读”用于阅读分析；“允许修改项目目录”用于你明确授权的文件修改</td></tr>
+<tr><td>文件访问权限</td><td>“只读”用于阅读分析；写入模式要明确确认可写文件夹，包含本次工作目录</td></tr>
 <tr><td>最长运行时间（秒）</td><td>默认 900 秒；达到时限后会请求中断，不能保证瞬间停止</td></tr>
-<tr><td>模型</td><td>留空使用本机 Codex 默认；不确定时保持留空</td></tr>
-<tr><td>推理强度</td><td>保留默认即可，不同模型支持情况可能不同</td></tr>
-<tr><td>会话方式</td><td>第一次选“新建会话”；只有知道准确会话 ID 时才使用续接</td></tr>
+<tr><td>模型</td><td>下拉读取当前 Codex 可用模型；默认选项沿用 Codex 配置，不会静默替换失效模型</td></tr>
+<tr><td>推理强度</td><td>随模型下拉更新，不确定时保持默认</td></tr>
+<tr><td>会话方式</td><td>新建会话，或先选官方项目／无项目，再选已有会话名称；不必手填会话 ID</td></tr>
+<tr><td>额度耗尽后自动继续</td><td>默认关闭；明确需要时勾选，并填写最多继续次数（默认 3 次，上限 20 次）</td></tr>
 </tbody></table></div>
+<p>真实来源下点击“刷新模型、项目及会话”读取目录；模拟模式不连接真实账户。切换账户或 Codex 数据来源后需重新加载，列表读取失败不代表没有项目。</p>
+<p>继续已有会话会自动显示实际目录，不能手动覆盖。目前本机 CLI 尚不能只读提供原生会话的完整有效权限，因此新建此类任务会提示 <code>CODEX_ENVIRONMENT_UNVERIFIED</code> 并阻止保存执行。它不是路径填错，也不能通过随意更改权限解决；可等待兼容支持，或明确选择新会话。官方无文件夹项目也尚未完整支持。保存本地任务不会立即在官方客户端生成一个新会话，实际执行时才创建。</p>
 <p>指令模板：</p>
 <pre aria-label="可复制的示例文字"><code>目标：我希望你完成什么。
 范围：只处理哪些文件或目录。
@@ -288,6 +292,7 @@ code{font:0.9em/1.7 Consolas,"Cascadia Code",monospace;background:#eef3f4;paddin
 </ol>
 <p>程序仍会检查身份、额度和是否已有任务在执行。手动执行不能绕过限制；同一份数据库同时只允许一个执行者。</p>
 <p>如果结果是“等待额度”，这次没有因等待而无限循环。额度恢复后，打开<strong>原运行记录</strong>，核对快照，再点击“手动启动此快照”，避免反复创建新的手动执行记录。</p>
+<p>自动续接子记录不能手动启动来绕过刷新检查，须由调度器按原证据领取。</p>
 <p>手动执行和自动队列是两种入口。若同一项工作已经排进自动队列，可以在其原记录中“手动启动此快照”；不要又在任务列表点击“执行”创建另一份安排。暂停自动派发也不会禁止你主动点击手动执行。</p>
 <a class="section-anchor" id="section-10"></a>
 <h2>10. 等额度可用后自动执行</h2>
@@ -319,6 +324,9 @@ code{font:0.9em/1.7 Consolas,"Cascadia Code",monospace;background:#eef3f4;paddin
 <p>保持电脑开机、联网、不休眠。可以将窗口隐藏到托盘。锁屏、网络切换或休眠唤醒后的实际状态，应重新打开概览确认。</p>
 <p>任务成功后不会每次刷新都重复执行。同一任务版本重复入队会返回原有记录；如确实需要安排新一轮，修改并保存成新版本，再明确加入队列。</p>
 <p>重启客户端或后台后，重新检查并手动恢复派发。失败、审批或结果不明也可能使队列暂停，先查清原因再恢复。</p>
+<h3>10.5 任务被真实额度截断后继续</h3>
+<p>若任务快照勾选“额度耗尽后自动继续”，程序只对<strong>明确确认因账户额度耗尽而失败</strong>的准确回合创建等待子记录。原失败记录和部分输出保留；额度窗口经服务端确认刷新、五小时和周额度均满足保留线后，子记录在原会话发送最初指令，再追加“请继续这个被截断的任务”。后来编辑指令不会改变这份快照，后缀也不会越加越多。</p>
+<p>你仍需自己启动调度并恢复派发。手动任务产生等待计划，不会替你开启自动派发；重启后仍暂停。普通网络错误、提交结果不明、审批请求、一般限流或最终已成功的任务不会自动重发。在运行详情可查看续接次数、根记录和父记录，点击“停止此续接链”阻止后续继续。已运行回合须单独请求取消，等待准确终态。</p>
 <a class="section-anchor" id="section-11"></a>
 <h2>11. 看懂额度和等待原因</h2>
 <p>“运行概览”显示服务端实际返回的额度窗口。可能看到较短窗口、周窗口等，名称和时长以实际结果为准；不要只盯着“五小时”一个数字。</p>
@@ -332,11 +340,13 @@ code{font:0.9em/1.7 Consolas,"Cascadia Code",monospace;background:#eef3f4;paddin
 <tr><td>账户身份未知</td><td>账户信息不足以确认执行身份</td><td>检查登录与 Codex 连接目录</td></tr>
 </tbody></table></div>
 <p>默认保留额度为 10%。例如某个相关窗口剩余 10% 时，程序会等待；这是比例阈值，不是“预留十次任务”。任务实际消耗不可由此精确预估。</p>
+<p>到“设置与帮助 → 额度保留线”可分别填写五小时和周百分比，范围 0～100%，最多一位小数。点击“保存保留线”整体保存两项，再通过后台菜单安全重启。对照“当前生效”数值确认，队列保持暂停，核对后再明确恢复。0% 不绕过真实耗尽，100% 会阻止提交；修改保留线不会被当作额度重置。“恢复默认草稿”只填回 10%，仍需保存。</p>
 <p>看到刷新倒计时归零，也仍需查询确认。短窗口刷新而周窗口仍不足时，任务仍会等待。通知说“已确认刷新”，也不代表队列里的任务一定已经执行。</p>
 <p>“查询额度”只做完整查询；“开启监控”持续跟踪；这两个操作本身都不表示允许自动派发。停止监控后，旧读数过期会变成未知。</p>
 <p>时间通常按界面本地格式显示；导出记录中的时间如以 <code>Z</code> 结尾，则是 UTC 时间。核对时留意时区。</p>
 <a class="section-anchor" id="section-12"></a>
 <h2>12. 修改任务与调整队列</h2>
+<p>任务列表默认“创建时间倒序”，新任务排在前。可切换为时间正序，选择按当前本地配置保存；排序后仍可筛选和翻页。编辑旧任务不会把它变成新任务，列表排序也不改变调度队列的优先级与入队顺序。</p>
 <h3>修改尚未执行的任务</h3>
 <ol>
 <li>先“暂停派发”，避免操作期间旧快照被领取。</li>
@@ -505,6 +515,7 @@ code{font:0.9em/1.7 Consolas,"Cascadia Code",monospace;background:#eef3f4;paddin
 <tr><td><code>ACCOUNT_UNKNOWN</code> / <code>ACCOUNT_CHANGED</code></td><td>暂停，核对账户及连接目录，再重新查询；没有确认身份前不执行</td></tr>
 <tr><td><code>CODEX_TIMEOUT</code> / <code>CODEX_NETWORK_ERROR</code></td><td>检查网络、代理和登录；恢复后重新查询。已有运行状态不明时先核对</td></tr>
 <tr><td><code>CODEX_INCOMPATIBLE</code> / <code>CODEX_PROTOCOL_ERROR</code></td><td>请维护者核对 CLI 和协议兼容性；数据异常不表示额度恢复</td></tr>
+<tr><td><code>CODEX_RPC_ERROR</code> / 恢复会话被拒绝</td><td>查看运行详情中的分类与诊断编号，在设置中导出脱敏诊断；<code>unknown</code> 表示原因尚未确定，不反复新建任务尝试</td></tr>
 <tr><td><code>QUOTA_WAIT</code> / 等待额度</td><td>看具体原因：窗口限制、保留线、过期、缺少数据或身份问题</td></tr>
 <tr><td>明明还有额度却不执行</td><td>检查其他窗口、保留线、调度进程、暂停状态、触发模式及待核对事项</td></tr>
 <tr><td>加入队列后没有动静</td><td>确认是真实来源；先启动调度进程，再恢复派发</td></tr>
@@ -558,6 +569,7 @@ Windows 版本及系统类型：
 <div class="table-scroll" role="region" aria-label="对照表" tabindex="0"><table><thead><tr><th scope="col">配置项</th><th scope="col">默认或示例值</th><th scope="col">含义</th></tr></thead><tbody>
 <tr><td><code>provider</code></td><td><code>mock</code>；真实使用填 <code>codex</code></td><td>模拟或真实来源</td></tr>
 <tr><td><code>reservePercent</code></td><td><code>10</code></td><td>相关窗口的保留百分比</td></tr>
+<tr><td><code>quotaReserves.fiveHour</code> / <code>quotaReserves.weekly</code></td><td>缺失时沿用 <code>reservePercent</code></td><td>设置页用两项专用表单整体保存；按服务端窗口时长识别</td></tr>
 <tr><td><code>pollIntervalMs</code></td><td><code>60000</code></td><td>通常查询间隔约 1 分钟；出错等情况会按规则调整</td></tr>
 <tr><td><code>quotaMaxAgeMs</code></td><td><code>120000</code></td><td>读数最多有效约 2 分钟，也会受服务端边界限制</td></tr>
 <tr><td><code>scheduler.trigger</code></td><td><code>available</code> 或 <code>refresh</code></td><td>额度可用即派发，或等待确认的新刷新</td></tr>

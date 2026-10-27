@@ -4,11 +4,13 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 /** Renderer fixtures exercise presentation only; backend records and remote protocol are untouched. */
-export async function runsRecoveryAcceptance(page, directory) {
-  const { call, evaluate, wait } = page;
+export async function runsRecoveryAcceptance(page, directory, taskId) {
+  const { call } = page;
+  const evaluate = source => page.evaluate(source.replaceAll("gui-smoke", taskId));
+  const wait = source => page.wait(source.replaceAll("gui-smoke", taskId));
   await call("Page.bringToFront");
   const state = await evaluate("fetch('/api/state').then(r=>r.json())");
-  const entries = state.scheduler.queue.filter(q=>q.taskId==='gui-smoke');
+  const entries = state.scheduler.queue.filter(q=>q.taskId===taskId);
   const first = entries.find(q=>q.revision===2), second = entries.find(q=>q.revision===4);
   assert.ok(first && second);
   const actual = await evaluate(`fetch('/api/run?id=${first.runId}').then(r=>r.json())`);

@@ -3,11 +3,11 @@ import { DatabaseSync } from "node:sqlite";
 import type { DataInspection } from "../domain/data-transfer.js";
 import { AppError } from "../shared/errors.js";
 import { localProcesses } from "../shared/process.js";
-import { migrations } from "./database.js";
+import { dispatchQueueView, migrations } from "./database.js";
 
 const names = new Set(["metadata", "tasks", "runs", "task_versions", "execution_lock", "execution_events", "quota_monitor_state",
   "quota_monitor_events", "quota_monitor_reset_keys", "scheduler_control", "scheduler_queue", "scheduler_worker", "scheduler_streams",
-  "scheduler_attention_ack", "execution_origins", "recovery_events"]);
+  "scheduler_attention_ack", "execution_origins", "recovery_events", "task_create_requests", "continuation_chains", "continuation_plans", "queue_positions", "continuation_queue"]);
 
 function openSource(path: string): DatabaseSync {
   try {
@@ -22,8 +22,10 @@ function inspect(db: DatabaseSync): DataInspection {
   const app = Number(db.prepare("PRAGMA application_id").get()!.application_id);
   if (schema > migrations.length) throw new AppError("STORAGE_VERSION", "源数据库版本较新，请使用匹配的客户端。");
   const tables = db.prepare("SELECT name,sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all();
+  const objects = db.prepare("SELECT type,name,sql FROM sqlite_master WHERE type IN ('trigger','view') ORDER BY name").all();
+  const normalize = (sql: string) => sql.replace(/\s+/g, " ").trim();
   if (schema < 1 || (app !== 0 && app !== 0x43515343) || !["metadata", "tasks", "runs"].every((name) => tables.some((row) => row.name === name))
-    || tables.some((row) => !names.has(String(row.name))) || db.prepare("SELECT name FROM sqlite_master WHERE type IN ('trigger','view')").get()) {
+    || tables.some((row) => !names.has(String(row.name))) || objects.some(row => row.type !== "view" || row.name !== "dispatch_queue" || normalize(String(row.sql)) !== normalize(dispatchQueueView))) {
     throw new AppError("STORAGE_FOREIGN", "源文件不是可识别的项目数据库，或含有不支持的对象。");
   }
   const checks = db.prepare("PRAGMA quick_check").all();
@@ -31,6 +33,7 @@ function inspect(db: DatabaseSync): DataInspection {
     throw new AppError("STORAGE_INVALID", "源数据库完整性检查失败，原文件保持不变。");
   }
   const hash = createHash("sha256").update(String(schema));
+  hash.update(JSON.stringify(objects));
   for (const row of tables) {
     // Table names come exclusively from the fixed schema whitelist above.
     hash.update(JSON.stringify(row));

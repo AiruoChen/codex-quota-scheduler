@@ -72,7 +72,7 @@ try {
   checkpoint = "gui-framework";
   const gui = await guiAcceptance(pageDebugger, artifacts, (step) => { checkpoint = step; });
   checkpoint = "tasks-and-queue";
-  const tasksQueue = await tasksQueueAcceptance(pageDebugger);
+  const tasksQueue = await tasksQueueAcceptance(pageDebugger, gui.taskId, step => { checkpoint = step; });
   const controlPage = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find((target) => target.url.endsWith("/startup.html"));
   assert.ok(controlPage, "Lifecycle control page exists");
   controlDebugger = await desktopDebugger(controlPage.webSocketDebuggerUrl);
@@ -80,7 +80,7 @@ try {
   await controlDebugger.evaluate("window.desktopLifecycle.command('show')");
   await wait("document.visibilityState === 'visible' && document.hasFocus()");
   checkpoint = "runs-and-recovery";
-  const runsRecovery = await runsRecoveryAcceptance(pageDebugger, artifacts);
+  const runsRecovery = await runsRecoveryAcceptance(pageDebugger, artifacts, gui.taskId);
   const image = await call("Page.captureScreenshot", { format: "png" });
   await writeFile(join(artifacts, "overview.png"), Buffer.from(image.data, "base64"));
   const record = await readInstance(configPath);
@@ -115,11 +115,14 @@ try {
     await controlDebugger.wait(`window.desktopLifecycle.read().then(v => v.phase === 'running' && v.connection.pid !== ${previous.pid})`);
     const origin = await controlDebugger.evaluate("window.desktopLifecycle.read().then(v => v.connection.url)");
     if (pausedDocument) await Promise.race([pausedDocument, delay(10000, undefined, { ref: false }).then(() => { throw new Error("New document was not intercepted"); })]);
-    await call("Page.reload");
-    if (pausedDocument) { await call("Fetch.disable"); stopWatching(); }
+    if (pausedDocument) { await call("Page.reload"); await call("Fetch.disable"); stopWatching(); }
     // A running backend does not imply that its new renderer has finished loading or is visible.
     await wait(`location.origin === ${JSON.stringify(origin)} && document.visibilityState === 'visible' && document.getElementById('source')?.textContent.includes('MOCK')`);
+    if (!pausedDocument) { await call("Page.reload"); await wait(`location.origin === ${JSON.stringify(origin)} && document.visibilityState === 'visible' && document.getElementById('source')?.textContent.includes('MOCK')`); }
     assert.equal(await controlDebugger.evaluate("window.desktopLifecycle.read().then(v=>v.code)"), null);
+    await evaluate("location.hash='#tasks'");
+    await wait("document.getElementById('task-sort')?.value==='created_asc'");
+    assert.equal(await evaluate("fetch('/api/preferences').then(r=>r.json()).then(p=>p.taskSort)"), "created_asc");
   }
   assert.equal(await evaluate("(async () => (await (await fetch('/api/tasks')).json()).some(t => t.id === 'desktop-smoke'))()"), true);
   assert.deepEqual(pageDebugger.errors, []);

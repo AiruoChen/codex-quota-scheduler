@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 
 /** Concurrent writers are synthetic API calls in the owned smoke profile. */
-export async function tasksQueueAcceptance(page) {
-  const { evaluate, wait } = page;
+export async function tasksQueueAcceptance(page, taskId, checkpoint = () => {}) {
+  const evaluate = source => page.evaluate(source.replaceAll("gui-smoke", taskId));
+  const wait = source => page.wait(source.replaceAll("gui-smoke", taskId));
   await page.call("Page.bringToFront");
+  checkpoint("tasks-filter");
   assert.deepEqual(await evaluate("Object.keys(window.desktopProject)"), ["chooseDirectory"]);
   await evaluate("location.hash='#tasks'");
   await wait("!document.getElementById('tasks').hidden && document.getElementById('task-rows').textContent.includes('gui-smoke')");
@@ -12,6 +14,7 @@ export async function tasksQueueAcceptance(page) {
   await evaluate("document.getElementById('task-search').value='gui-smoke';document.getElementById('task-search').dispatchEvent(new Event('input'))");
   await wait("document.getElementById('task-rows').children.length===1");
   await evaluate("document.querySelector('#task-rows button').click()");
+  checkpoint("tasks-conflict-editor");
   await wait("document.getElementById('task-dialog').open");
   const compete = `(async()=>{const csrf=(await(await fetch('/api/bootstrap')).json()).csrf;const task=await(await fetch('/api/task?id=gui-smoke')).json();const r=await fetch('/api/action',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({action:'task-save',definition:task,revision:task.revision,prompt:'Concurrent fixture revision '+(task.revision+1)})});if(!r.ok)throw new Error('Fixture writer failed');return r.json()})()`;
   await evaluate(compete);
@@ -19,6 +22,7 @@ export async function tasksQueueAcceptance(page) {
   await wait("document.getElementById('task-error').textContent.includes('TASK_CONFLICT')");
   assert.equal(await evaluate("document.getElementById('task-form').elements.namedItem('prompt').value"), "Unsaved fixture draft");
   await evaluate("document.getElementById('task-dialog').close()");
+  checkpoint("tasks-conflict-preview");
   await wait("document.querySelector('#task-rows tr').textContent.includes('v3')");
   await evaluate("document.querySelectorAll('#task-rows button')[1].click()");
   await wait("document.getElementById('snapshot-dialog').open && document.getElementById('snapshot-title').textContent.includes('v3')");
@@ -27,6 +31,7 @@ export async function tasksQueueAcceptance(page) {
   await wait("document.getElementById('snapshot-error').textContent.includes('TASK_CONFLICT')");
   assert.equal(await evaluate("fetch('/api/state').then(r=>r.json()).then(s=>s.scheduler.queue.filter(q=>q.taskId==='gui-smoke').length)"), 1);
   await evaluate("document.getElementById('snapshot-dialog').close()");
+  checkpoint("tasks-deduplicate");
   await wait("document.querySelector('#task-rows tr').textContent.includes('v4')");
   for (let index=0;index<2;index++) {
     await evaluate("document.querySelectorAll('#task-rows button')[1].click()");

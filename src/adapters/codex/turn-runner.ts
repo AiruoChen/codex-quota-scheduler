@@ -3,8 +3,10 @@ import { AppError } from "../../shared/errors.js";
 import { isRecord } from "../../shared/validation.js";
 import type { StdioRpcClient } from "./rpc-client.js";
 import type { QuotaAvailability } from "../../domain/quota-policy.js";
+import { rpcDiagnostic } from "./rpc-errors.js";
 
-type Terminal = { status: string } | { error: AppError };
+type Terminal = { status: string; usageLimitExceeded: boolean } | { error: AppError };
+const usageFailure = (turn: Record<string, unknown>) => isRecord(turn.error) && turn.error.codexErrorInfo === "usageLimitExceeded";
 
 /** Owns one turn, including notifications that arrive before turn/start responds. */
 export async function runTurn(client: StdioRpcClient, threadId: string, run: TaskRun, signal: AbortSignal, sink: ExecutionSink,
@@ -70,7 +72,7 @@ export async function runTurn(client: StdioRpcClient, threadId: string, run: Tas
     if (method === "turn/completed" && isRecord(params.turn) && typeof params.turn.status === "string") {
       if (Array.isArray(params.turn.items)) for (const item of params.turn.items) if (isRecord(item)) agentItem(item);
       sink.event("turn/completed", { status: params.turn.status });
-      finish({ status: params.turn.status });
+      finish({ status: params.turn.status, usageLimitExceeded: usageFailure(params.turn) });
     }
   };
   const offNotification = client.onNotification((method, params) => {
@@ -101,7 +103,8 @@ export async function runTurn(client: StdioRpcClient, threadId: string, run: Tas
       threadId, input: [{ type: "text", text: run.promptSnapshot }], cwd: run.taskSnapshot.projectDir,
       approvalPolicy: "on-request", approvalsReviewer: "user",
       sandboxPolicy: sandbox === "read-only" ? { type: "readOnly", networkAccess: false }
-        : { type: "workspaceWrite", writableRoots: [run.taskSnapshot.projectDir], networkAccess: false, excludeSlashTmp: true, excludeTmpdirEnvVar: true },
+        : { type: "workspaceWrite", writableRoots: run.taskSnapshot.environment?.writableRoots ?? [run.taskSnapshot.projectDir], networkAccess: false, excludeSlashTmp: true, excludeTmpdirEnvVar: true },
+      ...(run.taskSnapshot.environment ? { runtimeWorkspaceRoots: run.taskSnapshot.environment.roots.length ? run.taskSnapshot.environment.roots : [run.taskSnapshot.projectDir] } : {}),
       ...(run.taskSnapshot.model ? { model: run.taskSnapshot.model } : {}),
       ...(execution?.effort ? { effort: execution.effort } : {}),
     });
@@ -111,7 +114,7 @@ export async function runTurn(client: StdioRpcClient, threadId: string, run: Tas
     for (const event of buffered) consume(event.method, event.params);
     if (response.turn.status !== "inProgress" && typeof response.turn.status === "string") {
       if (Array.isArray(response.turn.items)) for (const item of response.turn.items) if (isRecord(item)) agentItem(item);
-      finish({ status: response.turn.status });
+      finish({ status: response.turn.status, usageLimitExceeded: usageFailure(response.turn) });
     }
     if (signal.aborted) abort();
     if (stopping) requestStop(stopping);
@@ -123,9 +126,12 @@ export async function runTurn(client: StdioRpcClient, threadId: string, run: Tas
       status: stopping === "timeout" ? "failed" : "cancelled", output: output(),
       error: stopping === "timeout" ? "EXECUTION_TIMEOUT: 任务超时，已确认回合中断。" : null,
     };
-    if (result.status === "failed") return { status: "failed", output: output(), error: "CODEX_TURN_FAILED: Codex 回合未成功完成。" };
+    if (result.status === "failed") return { status: "failed", output: output(), error: result.usageLimitExceeded ? "CODEX_QUOTA_INTERRUPTED: 已确认回合因额度耗尽失败。" : "CODEX_TURN_FAILED: Codex 回合未成功完成。",
+      ...(result.usageLimitExceeded && !stopping ? { quotaFailure: { threadId, turnId } } : {}) };
     return { status: "needs_attention", output: output(), error: "CODEX_TURN_STATUS_UNKNOWN: 未识别的回合状态，请人工核对。" };
   } catch (error) {
+    const diagnostic = rpcDiagnostic(error);
+    if (diagnostic) sink.event("codex_rpc_error", { ...diagnostic });
     const appError = error instanceof AppError ? error : new AppError("EXECUTION_FAILED", "手动执行失败。");
     return { status: submitted ? "needs_attention" : "failed", output: output(), error: `${appError.code}: ${appError.message}` };
   } finally {

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { mkdir, open, readFile, rename, unlink } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { AppError } from "../shared/errors.js";
@@ -20,7 +20,7 @@ const allowed = new Set([
   "provider", "pollIntervalMs", "quotaMaxAgeMs", "reservePercent", "limitId", "tasksFile",
   "codex.executable", "codex.args", "codex.home", "codex.requestTimeoutMs", "codex.shutdownTimeoutMs",
   "storage.databasePath",
-  "scheduler.trigger",
+  "scheduler.trigger", "quotaReserves",
 ]);
 
 export class ConfigManager {
@@ -28,6 +28,11 @@ export class ConfigManager {
   constructor(path: string) { this.path = resolve(path); }
 
   show(): Promise<AppConfig> { return loadConfig(this.path); }
+
+  async snapshot(): Promise<{ saved: AppConfig; revision: string }> {
+    const raw = await readFile(this.path, "utf8");
+    return { saved: parseConfig(JSON.parse(raw), this.path), revision: createHash("sha256").update(raw).digest("hex") };
+  }
 
   async init(source: string): Promise<AppConfig> {
     return this.create(await loadConfig(source));
@@ -47,10 +52,11 @@ export class ConfigManager {
     });
   }
 
-  async set(key: string, value: unknown): Promise<AppConfig> {
+  async set(key: string, value: unknown, expectedRevision?: string): Promise<AppConfig> {
     if (!allowed.has(key)) throw new AppError("INVALID_CONFIG_KEY", "配置键不受支持。");
     return this.lock(async () => {
       const previous = await readFile(this.path, "utf8");
+      if (expectedRevision !== undefined && createHash("sha256").update(previous).digest("hex") !== expectedRevision) throw new AppError("CONFIG_CONFLICT", "配置已被修改，请重新加载后保存；草稿仍保留。");
       const data = requireRecord(JSON.parse(previous), "配置");
       parseConfig(data, this.path);
       const keys = key.split(".");

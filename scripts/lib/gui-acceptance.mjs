@@ -1,26 +1,45 @@
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 
 /** Real DOM interaction in a disposable mock profile; no account or real submission. */
 export async function guiAcceptance(page, directory, checkpoint = () => {}) {
-  const { evaluate, wait, call } = page;
+  let taskId = "gui-smoke";
+  const evaluate = source => page.evaluate(source.replaceAll("gui-smoke", taskId));
+  const wait = source => page.wait(source.replaceAll("gui-smoke", taskId));
+  const { call } = page;
   checkpoint("gui-route-tasks");
   assert.equal(await evaluate("document.querySelectorAll('nav [data-view]').length"), 6);
   await evaluate("location.hash='#tasks'");
   await wait("!document.getElementById('tasks').hidden");
   checkpoint("gui-create-open");
+  const heldCatalog = [];
+  const stopCatalog = page.on("Fetch.requestPaused", event => { heldCatalog.push(event.requestId); });
+  await call("Fetch.enable", { patterns: [{ urlPattern: "*/api/catalog/models", requestStage: "Request" }] });
   await wait("!document.getElementById('new-task').disabled");
   await evaluate("document.getElementById('new-task').click()");
   await wait("document.getElementById('task-dialog').open");
+  for (let attempt = 0; attempt < 100 && !heldCatalog.length; attempt++) await delay(25);
+  assert.ok(heldCatalog.length, "Mock create remains usable while metadata loading is deliberately held");
   checkpoint("gui-create-save");
   await wait("!document.querySelector('#task-form button[type=submit]').disabled");
   await evaluate(`(() => {
     const form=document.getElementById('task-form');
-    for(const [key,value] of Object.entries({id:'gui-smoke',name:'GUI <b>验收</b>',projectDir:${JSON.stringify(directory)},prompt:'Synthetic GUI verification only.'})) form.elements.namedItem(key).value=value;
+    if(!form.elements.namedItem('id').readOnly) throw new Error('Task ID must be read-only');
+    for(const [key,value] of Object.entries({name:'GUI <b>验收</b>',projectDir:${JSON.stringify(directory)},prompt:'Synthetic GUI verification only.'})) form.elements.namedItem(key).value=value;
     form.requestSubmit();
   })()`);
-  await wait("!document.getElementById('task-dialog').open && document.getElementById('task-rows').textContent.includes('gui-smoke')");
+  await wait("!document.getElementById('task-dialog').open || !!document.getElementById('task-error').textContent");
+  assert.equal(await evaluate("document.getElementById('task-error').textContent"), "");
+  await wait("!document.getElementById('task-dialog').open && document.getElementById('task-rows').textContent.includes('GUI <b>验收</b>')");
+  taskId = await page.evaluate("fetch('/api/tasks').then(r=>r.json()).then(tasks=>tasks.find(t=>t.name==='GUI <b>验收</b>').id)");
+  assert.match(taskId, /^[a-f0-9-]{36}$/);
+  for (const requestId of heldCatalog) await call("Fetch.continueRequest", { requestId });
+  await call("Fetch.disable"); stopCatalog();
+  assert.equal(await evaluate("document.getElementById('task-sort').value"), "created_desc");
+  await evaluate("document.getElementById('task-sort').value='created_asc';document.getElementById('task-sort').dispatchEvent(new Event('change'))");
+  await wait("fetch('/api/preferences').then(r=>r.json()).then(p=>p.taskSort==='created_asc')");
   assert.equal(await evaluate("document.querySelectorAll('#task-rows b').length"), 0, "Task names are rendered as text");
   checkpoint("gui-edit-open");
   await evaluate("[...document.querySelectorAll('#task-rows tr')].find(row=>row.textContent.includes('gui-smoke')).querySelector('button').click()");
@@ -51,6 +70,9 @@ export async function guiAcceptance(page, directory, checkpoint = () => {}) {
   await evaluate("location.hash='#recovery'"); await wait("!document.getElementById('recovery').hidden && !!document.getElementById('recovery-report').textContent");
   checkpoint("gui-route-settings");
   await evaluate("location.hash='#settings'"); await wait("!document.getElementById('settings').hidden && document.getElementById('active-config').textContent.includes('mock')");
+  await evaluate("document.getElementById('reserve-five-hour').value='12.5';document.getElementById('reserve-weekly').value='20';document.getElementById('reserve-form').requestSubmit()");
+  await wait("document.getElementById('config-difference').textContent.includes('待重启')");
+  assert.equal(await evaluate("fetch('/api/config').then(r=>r.json()).then(c=>c.saved.quotaReserves.fiveHour)"), 12.5);
   checkpoint("gui-route-overview");
   await evaluate("location.hash='#overview'"); await wait("!document.getElementById('overview').hidden && Number(document.getElementById('waiting-count').textContent)>=2");
   checkpoint("gui-stop-monitor");
@@ -86,5 +108,5 @@ export async function guiAcceptance(page, directory, checkpoint = () => {}) {
     await writeFile(join(directory, `gui-${width}-${scale}.png`), Buffer.from(screenshot.data, "base64"));
   }
   await call("Emulation.clearDeviceMetricsOverride");
-  return { sixRoutes: true, taskRevision: 2, immutableSnapshot: true, textEscaping: true, offlineUnknown: true, reconnect: true, responsiveLayouts: 4 };
+  return { taskId, generatedId: true, defaultNewestFirst: true, independentReserves: true, sixRoutes: true, taskRevision: 2, immutableSnapshot: true, textEscaping: true, offlineUnknown: true, reconnect: true, responsiveLayouts: 4 };
 }

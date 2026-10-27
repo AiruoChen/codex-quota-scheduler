@@ -2,6 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { AppError } from "../../shared/errors.js";
 import { isRecord } from "../../shared/validation.js";
 import type { CodexLaunch, CodexOptions } from "./launcher.js";
+import { createRpcError, rpcMethod } from "./rpc-errors.js";
 
 interface PendingRequest {
   resolve: (value: unknown) => void;
@@ -9,22 +10,6 @@ interface PendingRequest {
   timer: NodeJS.Timeout;
   method: string;
   cleanup: () => void;
-}
-
-function rpcError(error: unknown, method: string): AppError {
-  const code = isRecord(error) && typeof error.code === "number" ? error.code : null;
-  const message = isRecord(error) && typeof error.message === "string" ? error.message : "";
-  // Inspect for classification only; raw protocol errors may contain credentials or URLs.
-  if (code === 401 || code === 403 || /unauth|not logged|not authenticated|sign.?in|log.?in|refresh.?token|token.*expired/i.test(message)) {
-    return new AppError("CODEX_AUTH_REQUIRED", "Codex 登录不可用或已失效，请使用相同 CODEX_HOME 运行 codex login 后重试。");
-  }
-  if (code === -32601 || code === -32602) {
-    return new AppError("CODEX_INCOMPATIBLE", `Codex 不支持 ${method} 或其参数，请检查 CLI 版本与协议兼容性。`);
-  }
-  if (/network|connect|fetch|timeout|timed out|dns|tls/i.test(message)) {
-    return new AppError("CODEX_NETWORK_ERROR", "Codex 无法获取账户额度，请检查网络或代理后重试。");
-  }
-  return new AppError("CODEX_RPC_ERROR", `Codex 拒绝 ${method} 请求（RPC ${code ?? "unknown"}）。`);
 }
 
 /** A single stdio JSON-RPC connection. It never logs raw stderr, results or errors. */
@@ -41,7 +26,7 @@ export class StdioRpcClient {
   private sequence = 0;
   private static readonly maxMessageBytes = 1024 * 1024;
 
-  constructor(launch: CodexLaunch, private readonly options: CodexOptions) {
+  constructor(private readonly launch: CodexLaunch, private readonly options: CodexOptions) {
     this.child = spawn(launch.executable, [...launch.args, "app-server", "--listen", "stdio://"], {
       env: launch.env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true, shell: false,
     });
@@ -65,7 +50,7 @@ export class StdioRpcClient {
     const id = ++this.sequence;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
-        this.fail(new AppError("CODEX_TIMEOUT", `Codex ${method} 请求超时，请检查网络、登录状态或调整 requestTimeoutMs。`));
+        this.fail(new AppError("CODEX_TIMEOUT", `Codex ${rpcMethod(method)} 请求超时，请检查网络、登录状态或调整 requestTimeoutMs。`));
       }, this.options.requestTimeoutMs);
       const abort = () => {
         this.pending.delete(id);
@@ -142,7 +127,7 @@ export class StdioRpcClient {
       this.pending.delete(message.id);
       clearTimeout(request.timer);
       request.cleanup();
-      if (message.error !== undefined) request.reject(rpcError(message.error, request.method));
+      if (message.error !== undefined) request.reject(createRpcError(message.error, request.method, this.launch.version));
       else if (Object.hasOwn(message, "result")) request.resolve(message.result);
       else { request.reject(new AppError("CODEX_PROTOCOL_ERROR", "Codex 响应缺少 result 或 error。")); this.invalid(); }
     }

@@ -4,7 +4,7 @@ import type { AppConfig } from "../config/load.js";
 import { ConfigManager } from "../config/manage.js";
 import { systemClock, type Clock } from "../domain/ports.js";
 import { AppError } from "../shared/errors.js";
-import { isRecord, requireRecord, requireString } from "../shared/validation.js";
+import { isRecord, requireNumber, requireRecord, requireString } from "../shared/validation.js";
 import { parseTask } from "../tasks/load.js";
 import type { RuntimeActivity, ShutdownMode } from "../domain/lifecycle.js";
 import type { SchedulerRepository } from "../domain/scheduler.js";
@@ -14,6 +14,10 @@ import { quotaDisplay } from "./quota-display.js";
 import { desktopEvents } from "../storage/desktop-feed.js";
 import { digest } from "../monitor/recognize.js";
 import type { FeedRequest, DesktopFeed } from "../domain/notifications.js";
+import { readRpcDiagnostic } from "../adapters/codex/rpc-errors.js";
+import { CodexCatalog } from "../adapters/codex/catalog.js";
+import { resolveTaskTarget } from "./task-target.js";
+import { ContinuationRepository } from "../storage/continuation-repository.js";
 
 export interface ManagementJob {
   id: number;
@@ -28,6 +32,24 @@ type Work = { job: ManagementJob; controller: AbortController; done: Promise<voi
 
 /** Owns long operations independently of browser connections. Domain services retain all execution rules. */
 export class ManagementService {
+  viewScope(): string { return digest(this.configPath); }
+  async preferences() {
+    const db = (await this.app.storage()).database;
+    const value = db.connection.prepare("SELECT value FROM metadata WHERE key=?").get(`ui.taskSort:${this.viewScope()}`)?.value;
+    if (value !== undefined && value !== "created_asc" && value !== "created_desc") throw new AppError("STORAGE_INVALID", "任务排序偏好无效，请保留数据核对。");
+    return { taskSort: value ?? "created_desc" };
+  }
+  async catalog(kind: string, params: URLSearchParams) {
+    this.ensureOpen();
+    if (this.config.provider !== "codex") return { source: "mock", scope: digest(["mock", this.configPath]), items: [], nextCursor: null };
+    const catalog = new CodexCatalog(this.config.codex), cursor = params.get("cursor") ?? undefined;
+    if (cursor && cursor.length > 4000) throw new AppError("INVALID_ARGUMENT", "目录分页标识过长。");
+    if (kind === "models") return { source: "codex", ...await catalog.models(cursor) };
+    if (kind === "projects") return { source: "codex", ...await catalog.projects(cursor) };
+    if (kind === "threads") return { source: "codex", ...await catalog.threads(params.get("projectId") ?? undefined, cursor, params.get("scope") ?? undefined) };
+    if (kind === "environment") return { source: "codex", ...await catalog.environment(requireString(params.get("threadId"), "threadId"), params.get("scope") ?? undefined) };
+    throw new AppError("HTTP_NOT_FOUND", "目录接口不存在。");
+  }
   readonly app: ReturnType<typeof createApp>;
   private readonly works: Work[] = [];
   private loop: Work | undefined;
@@ -108,7 +130,12 @@ export class ManagementService {
     const monitor = (await this.app.monitoring()).repository.status();
     const scheduler = (await this.app.scheduling()).repository.status();
     const recovery = (await this.recovery()).repository.report();
-    await this.app.storage();
+    const store = await this.app.storage();
+    const rpcDiagnostics = store.database.connection.prepare("SELECT data_json FROM execution_events WHERE type='codex_rpc_error' ORDER BY sequence DESC LIMIT 10")
+      .all().flatMap((row) => {
+        try { const diagnostic = readRpcDiagnostic(JSON.parse(String(row.data_json))); return diagnostic ? [diagnostic] : []; }
+        catch { return []; }
+      });
     const count = (status: string) => scheduler.queue.filter((item) => item.status === status).length;
     const lastSample = monitor ? Date.parse(monitor.observedAt) : Number.NaN;
     const ageSeconds = Number.isFinite(lastSample) ? Math.round((this.clock.now().getTime() - lastSample) / 1000) : null;
@@ -125,19 +152,35 @@ export class ManagementService {
           succeeded: count("succeeded"), failed: count("failed"), cancelled: count("cancelled"),
           needsAttention: count("needs_attention") } },
       recovery: { issues: recovery.issues.length, owners: recovery.owners.length },
+      codexRpcDiagnostics: rpcDiagnostics,
     };
   }
 
   async saveTask(input: unknown) {
     this.ensureOpen();
     const data = requireRecord(input, "任务");
-    const definition = requireRecord(data.definition, "definition");
-    const id = requireString(definition.id, "id");
+    const definition = { ...requireRecord(data.definition, "definition") };
+    const generated = definition.id === undefined || definition.id === "";
+    const id = generated ? "generated-task" : requireString(definition.id, "id");
     const prompt = requireString(data.prompt, "指令");
+    if (definition.environment !== undefined) throw new AppError("INVALID_ARGUMENT", "执行环境由后台读取，不能手填。");
+    if (data.target !== undefined) {
+      const execution = definition.execution === undefined ? {} : requireRecord(definition.execution, "execution");
+      const resolved = await resolveTaskTarget(this.config, this.configPath, data.target, data.scope,
+        generated ? requireString(data.requestId, "requestId") : id, execution.sandbox);
+      definition.projectDir = resolved.environment.cwd;
+      definition.environment = resolved.environment;
+      definition.session = resolved.threadId ? { mode: "resume", threadId: resolved.threadId } : { mode: "new" };
+    }
     // A UI prompt lives exclusively in SQLite. This provenance path is never read or written.
-    const task = parseTask({ ...definition, promptFile: definition.promptFile ?? resolve(dirname(this.configPath), "../.local/ui-prompts", encodeURIComponent(id) + ".md") }, dirname(this.configPath));
+    const task = parseTask({ ...definition, id, promptFile: definition.promptFile ?? resolve(dirname(this.configPath), "../.local/ui-prompts", encodeURIComponent(id) + ".md") }, dirname(this.configPath));
     const store = await this.app.storage();
     this.ensureOpen();
+    if (generated) {
+      if (data.revision !== undefined) throw new AppError("INVALID_ARGUMENT", "编辑任务必须保留原任务 ID。");
+      const { id: _id, ...fields } = task;
+      return store.tasks.createGenerated(fields, prompt, requireString(data.requestId, "requestId"));
+    }
     return data.revision === undefined ? store.tasks.create(task, prompt) : store.tasks.update(task, prompt, revision(data.revision));
   }
 
@@ -229,6 +272,15 @@ export class ManagementService {
     const scheduler = (await this.app.scheduling()).repository;
     this.ensureOpen();
     if (action === "task-save") return this.saveTask(data);
+    if (action === "task-sort-save") {
+      if (data.sort !== "created_asc" && data.sort !== "created_desc") throw new AppError("INVALID_ARGUMENT", "任务排序方式无效。");
+      store.database.transaction(() => store.database.connection.prepare("INSERT INTO metadata(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(`ui.taskSort:${this.viewScope()}`, String(data.sort)));
+      return { taskSort: data.sort };
+    }
+    if (action === "quota-reserves-save") {
+      const expected = requireString(data.revision, "revision");
+      return new ConfigManager(this.configPath).set("quotaReserves", { fiveHour: requireNumber(data.fiveHour, "fiveHour", 0, 100), weekly: requireNumber(data.weekly, "weekly", 0, 100) }, expected);
+    }
     if (action === "task-delete") { await store.tasks.remove(requireString(data.id, "id"), revision(data.revision)); return { archived: true }; }
     if (action === "enqueue") return scheduler.enqueue(requireString(data.id, "id"), data.revision === undefined ? undefined : revision(data.revision));
     if (action === "task-enable") {
@@ -239,6 +291,7 @@ export class ManagementService {
       return store.tasks.update({ ...task, enabled: data.enabled }, task.promptSnapshot, revision(data.revision));
     }
     if (action === "remove") return scheduler.remove(requireString(data.id, "id"));
+    if (action === "continuation-stop") { new ContinuationRepository(store.database, this.clock).stop(requireString(data.id, "id")); return { stopped: true }; }
     if (action === "pause") { scheduler.pause(); return scheduler.status(); }
     if (action === "resume") {
       this.requireReal();

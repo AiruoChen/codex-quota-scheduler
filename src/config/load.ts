@@ -10,6 +10,7 @@ export interface AppConfig {
   pollIntervalMs: number;
   quotaMaxAgeMs: number;
   reservePercent: number;
+  quotaReserves?: { fiveHour?: number; weekly?: number };
   limitId: string;
   tasksFile: string;
   codex: CodexOptions;
@@ -54,12 +55,24 @@ export function parseConfig(input: unknown, path: string): AppConfig {
   const scheduler = data.scheduler === undefined ? {} : requireRecord(data.scheduler, "scheduler");
   const trigger = scheduler.trigger === undefined ? "available" : scheduler.trigger;
   if (trigger !== "available" && trigger !== "refresh") throw new AppError("INVALID_CONFIG", "scheduler.trigger 必须是 available 或 refresh。");
+  let quotaReserves: AppConfig["quotaReserves"];
+  if (data.quotaReserves !== undefined) {
+    const values = requireRecord(data.quotaReserves, "quotaReserves");
+    if (Object.keys(values).some((key) => key !== "fiveHour" && key !== "weekly")) throw new AppError("INVALID_CONFIG", "额度保留线字段无效。");
+    quotaReserves = {};
+    for (const key of ["fiveHour", "weekly"] as const) if (values[key] !== undefined) {
+      const value = requireNumber(values[key], `quotaReserves.${key}`, 0, 100);
+      if (Math.abs(value * 10 - Math.round(value * 10)) > 1e-8) throw new AppError("INVALID_CONFIG", "额度保留线最多一位小数。");
+      quotaReserves[key] = value;
+    }
+  }
   return {
     schemaVersion: 1,
     provider: data.provider,
     pollIntervalMs: requireNumber(data.pollIntervalMs, "pollIntervalMs", 1000, 86400000),
     quotaMaxAgeMs: requireNumber(data.quotaMaxAgeMs, "quotaMaxAgeMs", 1000, 86400000),
     reservePercent: requireNumber(data.reservePercent, "reservePercent", 0, 100),
+    ...(quotaReserves ? { quotaReserves } : {}),
     limitId: requireString(data.limitId, "limitId"),
     tasksFile: resolve(dirname(configPath), requireString(data.tasksFile, "tasksFile")),
     codex: loadCodexOptions(data.codex, dirname(configPath)),

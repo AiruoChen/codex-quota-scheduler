@@ -1,4 +1,6 @@
 let csrf = "";
+let scope = "";
+export const viewScope = () => scope;
 
 export async function api<T>(path: string, data?: Record<string, unknown>): Promise<T> {
   const response = await fetch(path, { credentials: "same-origin", cache: "no-store", signal: AbortSignal.timeout(30000),
@@ -11,4 +13,4 @@ export async function api<T>(path: string, data?: Record<string, unknown>): Prom
   return result as T;
 }
 
-export async function bootstrap(): Promise<void> { csrf = (await api<{ csrf: string }>("/api/bootstrap")).csrf; }
+export async function bootstrap(): Promise<void> { const result = await api<{ csrf: string; viewScope: string }>("/api/bootstrap"); csrf = result.csrf; scope = result.viewScope; }

@@ -16,9 +16,11 @@ export function taskPreview(context: UiContext) {
     preview = task; mode = action;
     $("snapshot-title").textContent = `${action === "enqueue" ? "加入队列" : "手动执行"} · ${task.name} · v${task.revision}`;
     $("snapshot-body").replaceChildren(el("dl", { class: "detail-grid" },
-      el("dt", {}, "项目目录"), el("dd", {}, task.projectDir), el("dt", {}, "文件权限"), el("dd", {}, task.execution?.sandbox === "workspace-write" ? `允许修改：${task.projectDir}` : "只读"),
+      el("dt", {}, "项目目录"), el("dd", {}, task.projectDir), el("dt", {}, "官方项目"), el("dd", {}, task.environment?.projectKnown ? task.environment.projectId ?? "已确认无项目" : "未指定官方项目"),
+      el("dt", {}, "关联文件夹"), el("dd", {}, task.environment?.roots.join("；") || "无 / 本地模式"), el("dt", {}, "文件权限"), el("dd", {}, task.execution?.sandbox === "workspace-write" ? `允许修改：${task.environment?.writableRoots.join("；") ?? task.projectDir}` : "只读，禁用网络"),
       el("dt", {}, "优先级"), el("dd", {}, task.priority), el("dt", {}, "模型 / 推理"), el("dd", {}, `${task.model ?? "Codex 默认"} / ${task.execution?.effort ?? "默认"}`),
       el("dt", {}, "会话"), el("dd", {}, task.session.mode === "new" ? "新建会话" : `续接 ${task.session.threadId}`), el("dt", {}, "保存时间"), el("dd", {}, time(task.updatedAt))),
+      el("p", { class: "hint" }, task.quotaContinuation?.enabled ? `已开启额度中断续接，最多 ${task.quotaContinuation.maxAttempts} 次；原始指令后追加“请继续这个被截断的任务”。` : "额度中断自动续接未开启。"),
       el("h2", {}, "将保存的指令快照"), el("pre", {}, task.promptSnapshot), el("p", { class: "hint" }, "确认时校验此版本。同一版本重复入队会返回既有记录，不会重复提交。"));
     $("snapshot-error").textContent = "";
     confirm.textContent = action === "enqueue" ? "确认加入队列" : "确认手动执行";

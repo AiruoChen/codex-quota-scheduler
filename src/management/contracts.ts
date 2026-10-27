@@ -8,4 +8,4 @@ export type ManagementState = Awaited<ReturnType<ManagementService["state"]>>;
 export type { RunSummary } from "../domain/task.js";
 export interface RunDetail { run: TaskRun; events: ExecutionEvent[]; recovery: RecoveryEvent[];
   origin: { account: string; cliVersion: string } | null; cancelRequested: boolean }
-export interface ConfigDetail { active: AppConfig; saved: AppConfig }
+export interface ConfigDetail { active: AppConfig; saved: AppConfig; revision: string }

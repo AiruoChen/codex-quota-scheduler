@@ -14,6 +14,8 @@ import { ManagementService } from "../src/management/service.js";
 import { serveManagement } from "../src/adapters/http/management-server.js";
 import { RuntimeLogger } from "../src/runtime/log.js";
 import { SqliteStore } from "../src/storage/sqlite-store.js";
+import { createRpcError } from "../src/adapters/codex/rpc-errors.js";
+import { randomUUID } from "node:crypto";
 
 async function setup(provider: "mock" | "codex" = "mock", scenario = "success", clock?: Clock) {
   const dir = await mkdtemp(join(tmpdir(), "management 中文 &-"));
@@ -48,6 +50,27 @@ async function until(predicate: () => Promise<boolean>) {
   for (let index = 0; index < 120; index++) { if (await predicate()) return; await delay(50); }
   throw new Error("Timed out waiting for management operation");
 }
+
+test("U02/U07: GUI API creates a backend UUID idempotently and saves reserve pairs with concurrency validation", async () => {
+  const env = await setup();
+  try {
+    const data = { requestId: randomUUID(), definition: { name: "Generated fixture", enabled: true, projectDir: env.dir, priority: 1, session: { mode: "new" } }, prompt: "synthetic" };
+    const response = await env.action("task-save", data); assert.equal(response.status, 200);
+    const task = await response.json() as { id: string }; assert.match(task.id, /^[a-f0-9-]{36}$/);
+    assert.equal((await (await env.action("task-save", data)).json() as { id: string }).id, task.id);
+    const config = await env.get("/api/config"); assert.equal(typeof config.revision, "string");
+    assert.equal((await env.action("quota-reserves-save", { fiveHour: 12.5, weekly: 25, revision: config.revision })).status, 200);
+    const changed = await env.get("/api/config"); assert.deepEqual((changed.saved as { quotaReserves: unknown }).quotaReserves, { fiveHour: 12.5, weekly: 25 });
+    assert.equal((changed.active as { quotaReserves?: unknown }).quotaReserves, undefined);
+    assert.equal((await env.action("quota-reserves-save", { fiveHour: 20, weekly: 20, revision: config.revision })).status, 409);
+    assert.equal((await env.get("/api/preferences")).taskSort, "created_desc");
+    assert.equal((await env.action("task-sort-save", { sort: "created_asc" })).status, 200);
+    const reopened = new ManagementService(env.config, env.configPath);
+    try { assert.equal((await reopened.preferences()).taskSort, "created_asc"); }
+    finally { await reopened.close(); }
+    assert.equal((await env.action("task-sort-save", { sort: "invalid" })).status, 400);
+  } finally { await env.cleanup(); }
+});
 
 test("管理状态保留缺失窗口、回退边界及未知账户的保守判断", async () => {
   const now = new Date("2026-10-22T00:00:00Z");
@@ -100,7 +123,7 @@ test("脱敏诊断只经管理会话导出白名单状态，不包含账户、�
     assert.equal(denied.status, 403);
     const report = await env.get("/api/diagnostics");
     assert.equal(report.format, 1);
-    assert.deepEqual(Object.keys(report), ["format", "createdAt", "environment", "provider", "service", "quota", "scheduler", "recovery"]);
+    assert.deepEqual(Object.keys(report), ["format", "createdAt", "environment", "provider", "service", "quota", "scheduler", "recovery", "codexRpcDiagnostics"]);
     assert.equal(report.provider, "codex");
     assert.equal((report.scheduler as { paused: boolean }).paused, true);
     const exported = JSON.stringify(report);
@@ -108,6 +131,24 @@ test("脱敏诊断只经管理会话导出白名单状态，不包含账户、�
       "test-secret", "fixture@example.test", "executable", "databasePath", "promptSnapshot", "runtime.log"]) {
       assert.equal(exported.includes(secret), false, `诊断泄露 ${secret}`);
     }
+  } finally { await env.cleanup(); }
+});
+
+test("RPC 诊断导出重新投影白名单，拒绝未知类别并限制最近十条，不泄漏额外事件字段", async () => {
+  const env = await setup("codex");
+  try {
+    await env.task();
+    const store = await env.service.app.storage();
+    const run = await store.runs.create("one");
+    const diagnostic = createRpcError({ code: -32600, message: "unknown PRIVATE_ERROR_BODY" }, "thread/resume", "0.160.0-fixture").diagnostic;
+    for (let index = 0; index < 12; index++) store.execution.event(run.id, "codex_rpc_error", { ...diagnostic, raw: "PRIVATE_EVENT_BODY", path: env.dir });
+    store.execution.event(run.id, "codex_rpc_error", { ...diagnostic, reason: "PRIVATE_REASON_BODY" });
+    const report = await env.get("/api/diagnostics");
+    const items = report.codexRpcDiagnostics as Array<Record<string, unknown>>;
+    assert.equal(items.length, 9);
+    assert.ok(items.every(item => !Object.hasOwn(item, "raw") && !Object.hasOwn(item, "path")));
+    const text = JSON.stringify(report);
+    for (const secret of ["PRIVATE_ERROR_BODY", "PRIVATE_EVENT_BODY", "PRIVATE_REASON_BODY", env.dir, run.id]) assert.ok(!text.includes(secret));
   } finally { await env.cleanup(); }
 });
 

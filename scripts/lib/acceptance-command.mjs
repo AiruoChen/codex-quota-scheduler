@@ -59,7 +59,9 @@ export async function runAcceptanceCommand(id, command, args, logPath, { timeout
       try {
         const value = JSON.parse(line).smokeFailure;
         if (/^[A-Za-z0-9_-]{1,64}$/.test(value?.checkpoint)
-          && ["UI_NOT_READY", "DEBUGGER_TIMEOUT", "ASSERTION_FAILED", "NATIVE_PICKER_FAILED", "SMOKE_CHECK_FAILED"].includes(value.reason)
+          && ["UI_NOT_READY", "DEBUGGER_TIMEOUT", "ASSERTION_FAILED", "NATIVE_PICKER_FAILED", "SMOKE_CHECK_FAILED",
+            "NATIVE_CLOSE_UNSUPPORTED", "NATIVE_CLOSE_SYSTEM_UNAVAILABLE", "NATIVE_CLOSE_TIMEOUT", "NATIVE_CLOSE_WINDOW_MISSING",
+            "NATIVE_CLOSE_WINDOW_AMBIGUOUS", "NATIVE_CLOSE_POST_FAILED", "NATIVE_CLOSE_FAILED"].includes(value.reason)
           && ["visible", "hidden", "unknown"].includes(value.visibility) && typeof value.focused === "boolean") {
           error.smokeFailure = { checkpoint: value.checkpoint, reason: value.reason, visibility: value.visibility, focused: value.focused };
           for (const key of ["actual", "expected"]) {

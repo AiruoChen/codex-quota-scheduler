@@ -79,3 +79,14 @@ test("仅从 .local 直接子目录读取固定结果，拒绝外部路径与虚
   await assert.rejects(readHarnessResult({ passed: true, artifacts: directory }, "soak-acceptance-"), /ACCEPTANCE_ARTIFACT_PATH_INVALID/);
   await assert.rejects(readHarnessResult({ passed: false, artifacts: directory }, "desktop-acceptance-"), /ACCEPTANCE_ARTIFACT_PATH_INVALID/);
 });
+
+test("CI 保留原生关闭的固定失败分类和子检查点", async (t) => {
+  const directory = await localFixture(t, "acceptance-command-");
+  for (const reason of ["NATIVE_CLOSE_TIMEOUT", "NATIVE_CLOSE_WINDOW_MISSING", "NATIVE_CLOSE_WINDOW_AMBIGUOUS", "NATIVE_CLOSE_POST_FAILED", "NATIVE_CLOSE_FAILED"]) {
+    const diagnostic = { checkpoint: "tray-native-close", reason, visibility: "visible", focused: true };
+    const script = `console.log(JSON.stringify({smokeFailure:${JSON.stringify(diagnostic)}}));process.exit(1)`;
+    await assert.rejects(runAcceptanceCommand("desktop", process.execPath, ["-e", script], join(directory, reason + ".log")), error => {
+      assert.deepEqual(error.smokeFailure, diagnostic); return true;
+    });
+  }
+});

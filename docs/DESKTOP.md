@@ -1,6 +1,6 @@
-# 最小桌面客户端
+# 桌面客户端与后台生命周期
 
-已完成需求阶段 A：技术选型、独立窗口、模拟环境、后台连接、基础单实例、安全退出和 Windows x64 便携打包。
+已完成最小客户端及后台生命周期管理：独立窗口、模拟环境、受控启动/重启/停止、外部服务归属、等待/取消退出和 Windows x64 便携打包。
 页面复用现有控制台；GUI 模块化、托盘、通知、安装器、开机启动及自动更新由后续模块实施。
 选型见 [技术决策](DESKTOP-TECH-DECISION.md)，完整目标见 [桌面需求](DESKTOP-CLIENT-REQUIREMENTS.md)。
 
@@ -37,15 +37,30 @@ npm.cmd run package:desktop
 生成 `.release/desktop/CodexQuotaScheduler-win32-x64/`，复制整个目录后双击 `CodexQuotaScheduler.exe`。
 不能只复制 EXE，Chromium、Node 和程序资源位于同一目录；目标机器无需另装 Node.js/npm。
 这是未签名的便携样包，暂不含安装器；再次打包前需将旧生成目录移走，脚本不会自动覆盖。
+也可以构建到新的生成目录，保留已有客户端：`npm.cmd run package:desktop -- --output-name desktop-lifecycle`。
+该命令生成 `.release/desktop-lifecycle/CodexQuotaScheduler-win32-x64/`；命名仅允许字母、数字、横线与下划线。
 
 首次创建模拟配置、空任务和 SQLite 数据库，不发送真实任务。真实来源仍需可用的本机 Codex CLI 和登录状态；
 客户端不收集登录凭据，不能绕过账户额度。现有页面操作见 [管理界面说明](MANAGEMENT.md)。
 
 ## 关闭和数据
 
-本模块尚无托盘，关闭窗口会请求安全退出。自有后台先请求停止，等待实际结果保存后再关闭窗口，期间不能再操作。
-取消未确认时仍保留 needs_attention，不宣称远端已取消。
---config 连接既有外部服务时，关闭窗口只断开连接，外部服务继续运行；窗口标题会标记连接已有服务。
+菜单“后台服务 → 服务状态”打开独立状态窗口，显示当前服务归属、阶段、活动操作和错误原因。
+连接失败会保留状态窗口，可重试或明确核对已退出的服务记录，不会关闭客户端后悄悄重发任务。
+
+本模块尚无托盘。自有后台存在活动操作时，关闭窗口提供“继续保留窗口”“等待完成后退出”“请求取消后退出”。
+前者保持工作；等待式退出先暂停并阻止新操作，不中断当前任务；取消式退出等待准确回合的终止确认。
+等待期间可明确改为请求取消，不能在已开始停止后撤销为继续派发。取消未确认仍保存 needs_attention。
+没有活动操作时直接进行安全退出；窗口关闭前会等待后台操作、HTTP 请求和结果保存完成。
+
+“重启自有后台”需要确认，旧后台完全结束后才加载保存后的配置并启动新后台，新队列保持暂停。
+“停止自有后台”会保留客户端状态窗口；可再次启动。查询连接状态不会自动重启服务。
+
+--config 连接既有外部服务时，关闭窗口仅断开连接，不改变它的派发状态。
+如需停止外部服务，必须选择“停止外部服务…”并再次确认；此操作会影响它的其他连接。
+服务实例身份或地址发生变化时，停止操作被拒绝，不会转而停止新出现的服务。
+
+详细状态与保护见 [后台生命周期说明](DESKTOP-LIFECYCLE.md)。
 
 默认数据结构：
 
@@ -69,12 +84,14 @@ npm.cmd run check
 npm.cmd test
 npm.cmd run demo
 npm.cmd run smoke:desktop
+npm.cmd run smoke:lifecycle
 node --experimental-sqlite scripts/smoke-desktop.mjs --packaged .release/desktop/CodexQuotaScheduler-win32-x64/CodexQuotaScheduler.exe
+node --experimental-sqlite scripts/smoke-lifecycle.mjs --packaged .release/desktop/CodexQuotaScheduler-win32-x64/CodexQuotaScheduler.exe
 ```
 
 smoke 使用独立 `.local/desktop-acceptance-*`、模拟任务和临时回环调试端口，自动打开窗口并安全退出。
 它清除子进程 PATH 中的 Node/npm，检查内置 SQLite、任务持久化、初始暂停、页面无 Node 权限、单实例与实例释放。
 截图和不含控制密钥的结果摘要留在忽略目录。本机验证不等同于干净 Windows 虚拟机验收，也不替代真实任务验收。
 
-2026-10-25 本机结果：严格检查通过，Node.js 22 下 188 项回归全部通过；Electron 内置 Node 下 23 项执行协议替身测试全部通过。
-开发版与打包版交互验证均通过，0 页面脚本异常；另验证父进程退出后后台正常收尾。全部使用模拟环境，未发送真实任务。
+smoke:lifecycle 仅使用本机协议替身和模拟配置，验证等待成功、取消确认、取消未确认待核对、退出不停止外部服务、确认停止外部服务及启动错误修正后显式重试。
+不使用真实账户凭据或真实任务；结果与截图放在 `.local/lifecycle-acceptance-*`。具体本轮结果见生命周期说明。

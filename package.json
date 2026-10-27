@@ -18,7 +18,8 @@
     "package": "npm run build && node scripts/package.mjs",
     "desktop": "npm run build && electron .",
     "package:desktop": "npm run build && node scripts/package-desktop.mjs",
-    "smoke:desktop": "npm run build && node --experimental-sqlite scripts/smoke-desktop.mjs"
+    "smoke:desktop": "npm run build && node --experimental-sqlite scripts/smoke-desktop.mjs",
+    "smoke:lifecycle": "npm run build && node --experimental-sqlite scripts/smoke-lifecycle.mjs"
   },
   "devDependencies": {
     "@electron/packager": "20.3.0",

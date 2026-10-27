@@ -9,6 +9,11 @@ import { assertRecoveryClear, pauseForRecovery, recoveryEvent, readOrigin } from
 export class ExecutionRepository {
   constructor(private readonly db: Database, private readonly clock: Clock) {}
 
+  active(): { runId: string; ownerPid: number } | null {
+    const row = this.db.connection.prepare("SELECT run_id,owner_pid FROM execution_lock").get();
+    return row ? { runId: String(row.run_id), ownerPid: Number(row.owner_pid) } : null;
+  }
+
   claim(id: string): TaskRun {
     return this.db.transaction(() => this.claimInside(id));
   }

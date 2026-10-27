@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { request } from "node:http";
+import { connect } from "node:net";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -275,4 +276,83 @@ test("服务停止等待已提交任务核对；没有终止确认时保留 need
       assert.equal(store.execution.events(runId).filter((event) => event.type === "submission_started").length, 1);
     } finally { store.close(); }
   } finally { await env.cleanup(); }
+});
+
+test("等待式退出拒绝新任务但保留当前执行，完成并落盘后才停止", async () => {
+  const env = await setup("codex", "slow-success");
+  try {
+    await env.task();
+    const job = await (await env.action("run", { id: "one" })).json() as { id: number };
+    let runId = "";
+    await until(async () => {
+      runId = (await env.service.state()).jobs.find((item) => item.id === job.id)?.runId ?? "";
+      return !!runId && !!(await (await env.service.app.storage()).runs.get(runId))?.turnId;
+    });
+    const stopping = env.server.close("wait");
+    const status = await (await fetch(env.server.url + "/api/runtime", { headers: { Authorization: "Bearer test-secret",
+      "X-Runtime-Instance": "01234567-abcd-1234-abcd-0123456789ab" } })).json() as { stopping: boolean; activeOperations: number; shutdownMode: string };
+    assert.equal(status.stopping, true); assert.equal(status.shutdownMode, "wait"); assert.ok(status.activeOperations > 0);
+    assert.equal((await env.action("run", { id: "one" })).status, 409);
+    assert.equal((await (await env.service.app.storage()).runs.get(runId))?.status, "running");
+    await stopping;
+    const store = new SqliteStore(env.config.storage.databasePath);
+    try { assert.equal((await store.runs.get(runId))?.status, "succeeded"); } finally { store.close(); }
+    const trace = await readFile(env.trace, "utf8");
+    assert.ok(!trace.includes('"method":"turn/interrupt"'));
+    assert.equal(trace.split('"method":"turn/start"').length - 1, 1);
+  } finally { await env.cleanup(); }
+});
+
+test("等待式停止期间控制接口可显式升级取消，并等待终止确认", async () => {
+  const env = await setup("codex", "hang");
+  try {
+    await env.task();
+    const job = await (await env.action("run", { id: "one" })).json() as { id: number };
+    let runId = "";
+    await until(async () => {
+      runId = (await env.service.state()).jobs.find((item) => item.id === job.id)?.runId ?? "";
+      return !!runId && !!(await (await env.service.app.storage()).runs.get(runId))?.turnId;
+    });
+    const stopping = env.server.close("wait");
+    const response = await fetch(env.server.url + "/api/runtime/stop?mode=cancel", { method: "POST", headers: {
+      Authorization: "Bearer test-secret", "X-Runtime-Instance": "01234567-abcd-1234-abcd-0123456789ab" } });
+    assert.equal(response.status, 202);
+    await stopping;
+    const store = new SqliteStore(env.config.storage.databasePath);
+    try {
+      assert.equal((await store.runs.get(runId))?.status, "cancelled");
+      assert.ok(store.execution.events(runId).some((event) => event.type === "turn/completed"));
+    } finally { store.close(); }
+  } finally { await env.cleanup(); }
+});
+
+test("调度等待式退出先暂停派发，当前任务完成后不领取下一项", async () => {
+  const env = await setup("codex", "slow-success");
+  try {
+    await env.task("first snapshot");
+    const first = await (await env.action("enqueue", { id: "one" })).json() as TaskRun;
+    await env.task("second snapshot", 1);
+    const second = await (await env.action("enqueue", { id: "one" })).json() as TaskRun;
+    await env.action("scheduler-start");
+    await until(async () => !!(await env.service.state()).scheduler.worker);
+    await env.action("resume");
+    await until(async () => !!(await (await env.service.app.storage()).runs.get(first.id))?.turnId);
+    await env.server.close("wait");
+    const store = new SqliteStore(env.config.storage.databasePath);
+    try {
+      assert.equal((await store.runs.get(first.id))?.status, "succeeded");
+      assert.equal((await store.runs.get(second.id))?.status, "queued");
+      assert.equal(store.execution.events(second.id).filter((event) => event.type === "submission_started").length, 0);
+    } finally { store.close(); }
+    assert.ok(!(await readFile(env.trace, "utf8")).includes('"method":"turn/interrupt"'));
+  } finally { await env.cleanup(); }
+});
+
+test("浏览器只建立连接而不发请求时，服务仍可在排空后安全停止", async () => {
+  const env = await setup();
+  const socket = connect(Number(new URL(env.server.url).port), "127.0.0.1");
+  try {
+    await new Promise<void>((done, reject) => { socket.once("connect", done); socket.once("error", reject); });
+    await Promise.race([env.server.close("wait"), delay(2000, undefined, { ref: false }).then(() => { throw new Error("Idle preconnect blocked shutdown"); })]);
+  } finally { socket.destroy(); await env.cleanup(); }
 });

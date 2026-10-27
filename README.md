@@ -26,8 +26,11 @@ Windows PowerShell 若限制执行 npm.ps1，请使用上面的 npm.cmd；其他
 ## 本地管理界面
 
 已提供最小 Windows 桌面客户端：开发运行 `npm.cmd run desktop`，便携打包 `npm.cmd run package:desktop`。
-便携目录自带运行时，双击 `CodexQuotaScheduler.exe` 即可运行；默认空任务模拟环境，关闭窗口会安全退出自有后台。
+便携目录自带运行时，双击 `CodexQuotaScheduler.exe` 即可运行；默认空任务模拟环境。
+后台菜单提供状态、重启和停止；活动任务退出时可选择等待或请求取消，外部服务需要单独确认停止。
 使用方法和当前边界见 [桌面客户端](docs/DESKTOP.md)，选型见 [技术决策](docs/DESKTOP-TECH-DECISION.md)。
+本模块的状态、退出流程和验收见 [后台生命周期](docs/DESKTOP-LIFECYCLE.md)。
+桌面回归会主动拦截重启后的页面加载并触发刷新，检查当前后台地址、窗口可见性和任务保留；CI 失败会提供脱敏诊断摘要。
 
 ```powershell
 npm.cmd run ui

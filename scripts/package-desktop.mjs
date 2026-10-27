@@ -4,12 +4,17 @@ import { packager } from "@electron/packager";
 import { root, runtimeFiles } from "./lib/runtime-files.mjs";
 
 if (process.platform !== "win32" || process.arch !== "x64") throw new Error("The first desktop target is Windows x64; build on Windows x64.");
+const args = process.argv.slice(2);
+if (args.length && (args.length !== 2 || args[0] !== "--output-name" || !/^[a-zA-Z0-9_-]+$/.test(args[1]))) {
+  throw new Error("Usage: package-desktop.mjs [--output-name generated-directory-name]");
+}
 const files = await runtimeFiles({ desktop: true });
 const source = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
 const electron = JSON.parse(await readFile(join(root, "node_modules/electron/package.json"), "utf8"));
-const output = resolve(root, ".release/desktop");
+const outputName = args[1] ?? "desktop";
+const output = resolve(root, ".release", outputName);
 await mkdir(output, { recursive: true });
-if (await realpath(output) !== join(await realpath(root), ".release/desktop")) throw new Error("Desktop output must remain inside the repository.");
+if (await realpath(output) !== join(await realpath(root), ".release", outputName)) throw new Error("Desktop output must remain inside the repository.");
 await mkdir(join(root, ".tmp"), { recursive: true });
 const stage = await mkdtemp(join(root, ".tmp/desktop-stage-"));
 for (const path of files) {

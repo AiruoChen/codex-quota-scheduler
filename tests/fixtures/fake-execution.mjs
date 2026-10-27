@@ -91,7 +91,7 @@ input.on("line", (line) => {
       notification("item/agentMessage/delta", { itemId: "partial", delta: "work in progress" });
       return;
     }
-    setTimeout(messages, 20);
+    setTimeout(messages, scenario === "lifecycle-success" ? 3000 : scenario === "slow-success" ? 1200 : 20);
     return;
   }
   if (message.method === "turn/interrupt") {

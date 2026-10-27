@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { localProcesses } from "../shared/process.js";
 import { AppError } from "../shared/errors.js";
 import { isRecord } from "../shared/validation.js";
+import type { RuntimeControlStatus, ShutdownMode } from "../domain/lifecycle.js";
 
 export interface RuntimeRecord {
   version: 1;
@@ -111,11 +112,11 @@ async function recoverUnlocked(configPath: string) {
   return { recovered: true, note: "只清理服务运行记录；数据库执行权仍需 recovery 显式核对。" };
 }
 
-export async function contactInstance(record: RuntimeRecord, stop = false) {
+export async function contactInstance(record: RuntimeRecord, stop: boolean | ShutdownMode = false) {
   if (!record.url) throw new AppError("RUNTIME_STARTING", "服务尚未就绪，请稍后查询状态。");
   // Verify the responder before submitting a stop to a potentially reused local port.
   if (stop) await contactInstance(record);
-  const response = await fetch(record.url + (stop ? "/api/runtime/stop" : "/api/runtime"), {
+  const response = await fetch(record.url + (stop ? `/api/runtime/stop?mode=${stop === true ? "cancel" : stop}` : "/api/runtime"), {
     method: stop ? "POST" : "GET", signal: AbortSignal.timeout(3000), redirect: "error",
     headers: { Authorization: `Bearer ${record.token}`, "X-Runtime-Instance": record.instance },
   });
@@ -125,4 +126,14 @@ export async function contactInstance(record: RuntimeRecord, stop = false) {
     throw new AppError("RUNTIME_UNREACHABLE", "响应身份与运行记录不匹配，不会信任该服务状态。");
   }
   return result;
+}
+
+export async function inspectRuntime(record: RuntimeRecord): Promise<RuntimeControlStatus> {
+  const value = await contactInstance(record);
+  if (!Number.isSafeInteger(value.activeOperations) || Number(value.activeOperations) < 0
+    || value.activeRunId !== null && typeof value.activeRunId !== "string" || typeof value.paused !== "boolean"
+    || ![null, "wait", "cancel"].includes(value.shutdownMode as ShutdownMode | null)) {
+    throw new AppError("RUNTIME_INCOMPATIBLE", "后台不支持当前生命周期协议，请保持旧服务独立运行并手动升级。");
+  }
+  return value as unknown as RuntimeControlStatus;
 }

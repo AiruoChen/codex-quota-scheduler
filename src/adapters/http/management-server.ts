@@ -5,13 +5,14 @@ import { ConfigManager } from "../../config/manage.js";
 import { AppError } from "../../shared/errors.js";
 import { ManagementService } from "../../management/service.js";
 import type { RuntimeLogger } from "../../runtime/log.js";
+import type { ShutdownMode } from "../../domain/lifecycle.js";
 
 export interface ServerOptions {
   port: number;
   instance: string;
   controlToken: string;
   logger: RuntimeLogger;
-  onStop(): void;
+  onStop(mode?: ShutdownMode): void;
 }
 
 export async function serveManagement(service: ManagementService, options: ServerOptions) {
@@ -21,8 +22,15 @@ export async function serveManagement(service: ManagementService, options: Serve
     [name, await readFile(new URL(`../../management/public/${name}`, import.meta.url))] as const)));
   let origin = "";
   let stopping = false;
+  let shutdownMode: ShutdownMode | null = null;
   let closePromise: Promise<void> | undefined;
-  const server = createServer((request, response) => { void handle(request, response); });
+  const requests = new Set<Promise<void>>();
+  const server = createServer((request, response) => {
+    const flushed = new Promise<void>((done) => { response.once("finish", done); response.once("close", done); });
+    const handling = handle(request, response).then(() => flushed).finally(() => { requests.delete(handling); });
+    requests.add(handling);
+    void handling.catch(() => {});
+  });
   server.requestTimeout = 15000;
   server.headersTimeout = 10000;
   server.keepAliveTimeout = 1000;
@@ -46,10 +54,14 @@ export async function serveManagement(service: ManagementService, options: Serve
       if (path === "/api/runtime" || path === "/api/runtime/stop") {
         if (!equal(request.headers.authorization, `Bearer ${options.controlToken}`)
           || request.headers["x-runtime-instance"] !== options.instance) throw new AppError("HTTP_FORBIDDEN", "运行实例不匹配。");
-        if (path === "/api/runtime" && request.method === "GET") return reply(response, 200, { instance: options.instance, pid: process.pid, stopping });
+        if (path === "/api/runtime" && request.method === "GET") return reply(response, 200, { instance: options.instance, pid: process.pid, stopping, shutdownMode, ...service.activity() });
         if (path === "/api/runtime/stop" && request.method === "POST") {
+          const mode = url.searchParams.get("mode") ?? "cancel";
+          if (mode !== "wait" && mode !== "cancel") throw new AppError("INVALID_ARGUMENT", "未知停止方式。");
+          if (shutdownMode !== "cancel") shutdownMode = mode;
+          service.beginShutdown(shutdownMode);
           reply(response, 202, { instance: options.instance, pid: process.pid, stopping: true });
-          if (!stopping) { stopping = true; service.beginShutdown(); setImmediate(options.onStop); }
+          if (!stopping) { stopping = true; setImmediate(() => options.onStop(shutdownMode!)); }
           return;
         }
         throw new AppError("HTTP_NOT_FOUND", "接口不存在。");
@@ -114,13 +126,22 @@ export async function serveManagement(service: ManagementService, options: Serve
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("Missing server address");
   origin = `http://127.0.0.1:${address.port}`;
-  return { url: origin, close(): Promise<void> {
+  return { url: origin, close(mode: ShutdownMode = "cancel"): Promise<void> {
+    service.beginShutdown(mode);
+    if (shutdownMode !== "cancel") shutdownMode = mode;
     closePromise ??= (async () => {
       stopping = true;
-      service.beginShutdown();
+      // Keep authenticated status/stop available while waiting; writes are already rejected.
+      await service.prepareStop(mode);
       // Stop accepting work before waiting for cancellation and durable finalization.
       const drained = new Promise<void>((resolve, reject) => { server.close((error) => error ? reject(error) : resolve()); server.closeIdleConnections(); });
-      try { await drained; } finally { await service.close(); }
+      // Browser preconnect sockets may never send headers. Drain handlers and response writes first,
+      // then close the remaining HTTP connections without truncating in-flight persistence work.
+      try {
+        while (requests.size) await Promise.allSettled([...requests]);
+        server.closeAllConnections();
+        await drained;
+      } finally { await service.close(mode); }
     })();
     return closePromise;
   } };

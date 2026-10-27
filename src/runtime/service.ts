@@ -9,18 +9,22 @@ import { AppError } from "../shared/errors.js";
 import { localProcesses } from "../shared/process.js";
 import { claimInstance, contactInstance, readInstance, runtimePaths } from "./instance.js";
 import { RuntimeLogger } from "./log.js";
+import type { ShutdownMode } from "../domain/lifecycle.js";
 
 export async function runForeground(configPath: string, port: number, options: { stopOnDisconnect?: boolean } = {}): Promise<void> {
   const config = await loadConfig(configPath);
   const lease = await claimInstance(configPath);
   let service: ManagementService | undefined;
   let server: Awaited<ReturnType<typeof serveManagement>> | undefined;
-  let stop!: () => void;
-  const stopped = new Promise<void>((resolveStop) => { stop = resolveStop; });
-  process.on("SIGINT", stop); process.on("SIGTERM", stop);
+  let resolveStopped!: () => void;
+  let shutdownMode: ShutdownMode = "cancel";
+  const stopped = new Promise<void>((resolveStop) => { resolveStopped = resolveStop; });
+  const stop = (mode: ShutdownMode = "cancel") => { shutdownMode = mode; resolveStopped(); };
+  const signalStop = () => { service?.beginShutdown("cancel"); stop(); };
+  process.on("SIGINT", signalStop); process.on("SIGTERM", signalStop);
   if (options.stopOnDisconnect) {
-    process.once("disconnect", stop);
-    if (!process.connected) stop(); // Parent may have exited while config/lease initialization was awaiting I/O.
+    process.once("disconnect", signalStop);
+    if (!process.connected) signalStop();
   }
   try {
     const logger = new RuntimeLogger(runtimePaths(configPath).log);
@@ -37,11 +41,11 @@ export async function runForeground(configPath: string, port: number, options: {
     await stopped;
     logger.write("runtime_stopping");
     await lease.stopping();
-    await server.close(); server = undefined; service = undefined;
+    await server.close(shutdownMode); server = undefined; service = undefined;
     logger.write("runtime_stopped");
   } finally {
-    process.removeListener("SIGINT", stop); process.removeListener("SIGTERM", stop);
-    process.removeListener("disconnect", stop);
+    process.removeListener("SIGINT", signalStop); process.removeListener("SIGTERM", signalStop);
+    process.removeListener("disconnect", signalStop);
     try { if (server) await server.close(); else await service?.close(); }
     finally { await lease.release(); if (options.stopOnDisconnect && process.connected) process.disconnect?.(); }
   }

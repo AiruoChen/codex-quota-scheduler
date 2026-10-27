@@ -1,13 +1,14 @@
-import type { ExecutionOutcome, ExecutionSink, TaskRun } from "../domain/task.js";
-import { AppError } from "../shared/errors.js";
-import { isRecord } from "../shared/validation.js";
-import type { StdioRpcClient } from "../adapters/codex/rpc-client.js";
+import type { ExecutionOutcome, ExecutionSink, TaskRun } from "../../domain/task.js";
+import { AppError } from "../../shared/errors.js";
+import { isRecord } from "../../shared/validation.js";
+import type { StdioRpcClient } from "./rpc-client.js";
 
 type Terminal = { status: string } | { error: AppError };
 
 /** Owns one turn, including notifications that arrive before turn/start responds. */
 export async function runTurn(client: StdioRpcClient, threadId: string, run: TaskRun, signal: AbortSignal, sink: ExecutionSink): Promise<ExecutionOutcome> {
   const messages = new Map<string, { text: string; phase: string | null }>();
+  let messageBytes = 0;
   let turnId: string | undefined;
   let submitted = false;
   let stopping: "cancelled" | "timeout" | "attention" | undefined;
@@ -33,10 +34,21 @@ export async function runTurn(client: StdioRpcClient, threadId: string, run: Tas
     stopTimer = setTimeout(() => finish({ error: new AppError("EXECUTION_STOP_UNCONFIRMED", "未确认回合已停止，请核对会话及文件变更。") }), 5000);
   }
   const abort = () => requestStop(signal.reason === "timeout" ? "timeout" : "cancelled");
+  function saveMessage(id: string, text: string, phase: string | null) {
+    if (stopping === "attention") return;
+    const previous = messages.get(id);
+    const bytes = messageBytes - Buffer.byteLength(previous?.text ?? "") + Buffer.byteLength(text);
+    // Bound all retained messages, including non-final messages hidden by output().
+    if (bytes + messages.size > 1024 * 1024 || !previous && messages.size >= 2048) {
+      requestStop("attention"); return;
+    }
+    messageBytes = bytes;
+    messages.set(id, { text, phase });
+    sink.output(output());
+  }
   const agentItem = (item: Record<string, unknown>) => {
     if (item.type === "agentMessage" && typeof item.id === "string" && typeof item.text === "string") {
-      messages.set(item.id, { text: item.text.slice(0, 1024 * 1024), phase: typeof item.phase === "string" ? item.phase : null });
-      sink.output(output());
+      saveMessage(item.id, item.text, typeof item.phase === "string" ? item.phase : null);
     }
   };
   const consume = (method: string, params: Record<string, unknown>) => {
@@ -45,10 +57,7 @@ export async function runTurn(client: StdioRpcClient, threadId: string, run: Tas
     if (eventTurn !== turnId) return;
     if (method === "item/agentMessage/delta" && typeof params.itemId === "string" && typeof params.delta === "string") {
       const message = messages.get(params.itemId) ?? { text: "", phase: null };
-      message.text += params.delta;
-      messages.set(params.itemId, message);
-      if (Buffer.byteLength(output()) > 1024 * 1024) { requestStop("attention"); return; }
-      sink.output(output());
+      saveMessage(params.itemId, message.text + params.delta, message.phase);
     }
     if ((method === "item/started" || method === "item/completed") && isRecord(params.item)) {
       const item = params.item;
@@ -110,7 +119,8 @@ export async function runTurn(client: StdioRpcClient, threadId: string, run: Tas
       status: stopping === "timeout" ? "failed" : "cancelled", output: output(),
       error: stopping === "timeout" ? "EXECUTION_TIMEOUT: 任务超时，已确认回合中断。" : null,
     };
-    return { status: "failed", output: output(), error: "CODEX_TURN_FAILED: Codex 回合未成功完成。" };
+    if (result.status === "failed") return { status: "failed", output: output(), error: "CODEX_TURN_FAILED: Codex 回合未成功完成。" };
+    return { status: "needs_attention", output: output(), error: "CODEX_TURN_STATUS_UNKNOWN: 未识别的回合状态，请人工核对。" };
   } catch (error) {
     const appError = error instanceof AppError ? error : new AppError("EXECUTION_FAILED", "手动执行失败。");
     return { status: submitted ? "needs_attention" : "failed", output: output(), error: `${appError.code}: ${appError.message}` };

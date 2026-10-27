@@ -30,12 +30,17 @@ export class ConfigManager {
   show(): Promise<AppConfig> { return loadConfig(this.path); }
 
   async init(source: string): Promise<AppConfig> {
-    const config = await loadConfig(source);
+    return this.create(await loadConfig(source));
+  }
+
+  /** Validated initialization also supports desktop defaults without temporary config files. */
+  async create(input: unknown): Promise<AppConfig> {
+    const config = parseConfig(input, this.path);
     return this.lock(async () => {
       try { await readFile(this.path); }
       catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-        await atomicWrite(this.path, JSON.stringify(config, null, 2) + "\n");
+        await atomicWrite(this.path, JSON.stringify(input, null, 2) + "\n");
         return config;
       }
       throw new AppError("CONFIG_EXISTS", "配置已存在，init 不会覆盖；请使用 config set。");

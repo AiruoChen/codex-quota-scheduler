@@ -23,3 +23,21 @@ jobs:
       - run: npm run check
       - run: npm test
       - run: npm run demo
+
+  desktop:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: node node_modules/electron/install.js
+      - run: npm run package:desktop
+      - run: node --experimental-sqlite scripts/smoke-desktop.mjs --packaged .release/desktop/CodexQuotaScheduler-win32-x64/CodexQuotaScheduler.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CodexQuotaScheduler-win32-x64
+          path: .release/desktop/CodexQuotaScheduler-win32-x64/
+          if-no-files-found: error

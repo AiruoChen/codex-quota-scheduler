@@ -1,15 +1,15 @@
-import type { TaskExecutor } from "../domain/ports.js";
-import { systemClock, type Clock } from "../domain/ports.js";
-import type { ExecutionOutcome, ExecutionSink, TaskRun } from "../domain/task.js";
-import { AppError } from "../shared/errors.js";
+import type { TaskExecutor } from "../../domain/ports.js";
+import { systemClock, type Clock } from "../../domain/ports.js";
+import type { ExecutionOutcome, ExecutionSink, TaskRun } from "../../domain/task.js";
+import { AppError } from "../../shared/errors.js";
 import { stat, realpath } from "node:fs/promises";
-import type { AppConfig } from "../config/load.js";
-import { connectCodex, readAccount, readQuota } from "../adapters/codex/session.js";
-import { evaluateQueue } from "../scheduler/evaluate.js";
-import { isRecord } from "../shared/validation.js";
+import type { AppConfig } from "../../config/load.js";
+import { connectCodex, readAccount, readQuota } from "./session.js";
+import { evaluateQueue } from "../../scheduler/evaluate.js";
+import { isRecord } from "../../shared/validation.js";
 import { runTurn } from "./turn-runner.js";
-import type { QuotaSnapshot } from "../domain/quota.js";
-import { codexConnectionKey } from "../adapters/codex/connection-key.js";
+import type { QuotaSnapshot } from "../../domain/quota.js";
+import { codexConnectionKey } from "./connection-key.js";
 
 export class CodexExecutor implements TaskExecutor {
   constructor(private readonly config: AppConfig, private readonly clock: Clock = systemClock) {}

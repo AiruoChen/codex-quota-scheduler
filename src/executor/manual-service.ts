@@ -4,7 +4,7 @@ import { systemClock } from "../domain/ports.js";
 import type { ExecutionOutcome, ExecutionSink, TaskRun } from "../domain/task.js";
 import { AppError } from "../shared/errors.js";
 import type { SqliteStore } from "../storage/sqlite-store.js";
-import { CodexExecutor } from "./codex-executor.js";
+import { CodexExecutor } from "../adapters/codex/codex-executor.js";
 import type { QuotaSnapshot } from "../domain/quota.js";
 import { redact } from "../shared/redact.js";
 

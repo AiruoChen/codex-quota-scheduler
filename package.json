@@ -4,18 +4,26 @@
   "private": true,
   "description": "Modular local Codex quota monitor and task scheduler",
   "type": "module",
-  "engines": { "node": ">=22.12.0" },
+  "main": "dist/src/desktop/main.js",
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/copy-ui.mjs",
-    "check": "tsc -p tsconfig.json --noEmit",
+    "check": "tsc -p tsconfig.json --noEmit && node scripts/check.mjs",
     "test": "npm run build && node scripts/test.mjs",
     "start": "node --experimental-sqlite dist/src/cli.js",
     "demo": "npm run build && node --experimental-sqlite dist/src/cli.js demo",
     "ui": "npm run build && node --experimental-sqlite dist/src/cli.js ui",
-    "package": "npm run build && node scripts/package.mjs"
+    "package": "npm run build && node scripts/package.mjs",
+    "desktop": "npm run build && electron .",
+    "package:desktop": "npm run build && node scripts/package-desktop.mjs",
+    "smoke:desktop": "npm run build && node --experimental-sqlite scripts/smoke-desktop.mjs"
   },
   "devDependencies": {
+    "@electron/packager": "20.3.0",
     "@types/node": "^22.10.5",
+    "electron": "45.0.0",
     "typescript": "~5.7.3"
   }
 }

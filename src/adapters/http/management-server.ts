@@ -48,8 +48,8 @@ export async function serveManagement(service: ManagementService, options: Serve
           || request.headers["x-runtime-instance"] !== options.instance) throw new AppError("HTTP_FORBIDDEN", "运行实例不匹配。");
         if (path === "/api/runtime" && request.method === "GET") return reply(response, 200, { instance: options.instance, pid: process.pid, stopping });
         if (path === "/api/runtime/stop" && request.method === "POST") {
-          reply(response, 202, { stopping: true });
-          if (!stopping) { stopping = true; setImmediate(options.onStop); }
+          reply(response, 202, { instance: options.instance, pid: process.pid, stopping: true });
+          if (!stopping) { stopping = true; service.beginShutdown(); setImmediate(options.onStop); }
           return;
         }
         throw new AppError("HTTP_NOT_FOUND", "接口不存在。");
@@ -117,6 +117,7 @@ export async function serveManagement(service: ManagementService, options: Serve
   return { url: origin, close(): Promise<void> {
     closePromise ??= (async () => {
       stopping = true;
+      service.beginShutdown();
       // Stop accepting work before waiting for cancellation and durable finalization.
       const drained = new Promise<void>((resolve, reject) => { server.close((error) => error ? reject(error) : resolve()); server.closeIdleConnections(); });
       try { await drained; } finally { await service.close(); }

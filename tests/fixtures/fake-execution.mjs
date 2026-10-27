@@ -60,8 +60,19 @@ input.on("line", (line) => {
     assert.equal(message.params.sandboxPolicy.networkAccess, false);
     if (scenario === "lost-submission") { process.exit(7); }
     if (scenario === "early-complete") { messages(); result({ turn: { id: "turn-1", status: "inProgress" } }); return; }
+    if (scenario === "unknown-start-status") { result({ turn: { id: "turn-1", status: "future-status" } }); return; }
     result({ turn: { id: "turn-1", status: "inProgress" } });
     notification("turn/started", { turn: { id: "turn-1", status: "inProgress" } });
+    if (scenario === "unknown-terminal-status") { completed("future-status"); return; }
+    if (scenario === "large-completed-output" || scenario === "hidden-delta-output") {
+      notification("item/completed", { item: { id: "final", type: "agentMessage", text: "final", phase: "final_answer" } });
+      for (const id of ["large-1", "large-2", "large-3"]) {
+        if (scenario === "large-completed-output") {
+          notification("item/completed", { item: { id, type: "agentMessage", text: "x".repeat(600000), phase: "commentary" } });
+        } else notification("item/agentMessage/delta", { itemId: id, delta: "x".repeat(600000) });
+      }
+      completed("completed"); return;
+    }
     if (scenario === "failure") {
       notification("error", { error: { message: "private-debug-secret-must-not-leak" }, willRetry: false });
       completed("failed"); return;

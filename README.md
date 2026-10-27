@@ -31,6 +31,7 @@ Windows PowerShell 若限制执行 npm.ps1，请使用上面的 npm.cmd；其他
 使用方法和当前边界见 [桌面客户端](docs/DESKTOP.md)，选型见 [技术决策](docs/DESKTOP-TECH-DECISION.md)。
 本模块的状态、退出流程和验收见 [后台生命周期](docs/DESKTOP-LIFECYCLE.md)。
 桌面回归会主动拦截重启后的页面加载并触发刷新，检查当前后台地址、窗口可见性和任务保留；CI 失败会提供脱敏诊断摘要。
+已完成 GUI 基础框架与概览：六个导航入口、脱敏全局状态、全部额度窗口、当前运行和队列摘要；断线/过期显示未知。见 [GUI 使用与模块说明](docs/DESKTOP-GUI.md)。
 
 ```powershell
 npm.cmd run ui

@@ -6,6 +6,11 @@ import { evaluateQuota, hasQuotaIdentity, type QuotaPolicy } from "../domain/quo
 export interface MonitorOptions extends QuotaPolicy { pollIntervalMs: number }
 export const digest = (value: unknown): string => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
+// Full Codex reads have been observed to differ by one second for the same
+// boundary. Keep the historical high-water mark; this allowance neither
+// generates a reset event nor bypasses the current snapshot's expiry checks.
+const resetBoundaryToleranceMs = 1000;
+
 function identity(snapshot: QuotaSnapshot): string | null {
   if (snapshot.source === "mock") return "mock";
   const account = snapshot.account;
@@ -59,8 +64,11 @@ export function recognize(previous: MonitorState | null, observation: MonitorObs
         const index = state.windows.findIndex((item) => item.bucketId === bucket.id && item.slot === window.slot);
         const prior = state.windows[index];
         const next: TrackedWindow = { bucketId: bucket.id, slot: window.slot, durationMinutes: window.durationMinutes, resetsAt: window.resetsAt };
+        const boundaryDelta = prior?.durationMinutes === window.durationMinutes && prior.resetsAt !== null && window.resetsAt !== null
+          ? Date.parse(window.resetsAt) - Date.parse(prior.resetsAt) : null;
         if (comparable && prior?.durationMinutes === window.durationMinutes && prior.resetsAt !== null && window.resetsAt !== null
-          && Date.parse(prior.resetsAt) <= fetched && Date.parse(window.resetsAt) > fetched && Date.parse(window.resetsAt) > Date.parse(prior.resetsAt)) {
+          && Date.parse(prior.resetsAt) <= fetched && Date.parse(window.resetsAt) > fetched
+          && boundaryDelta !== null && boundaryDelta > resetBoundaryToleranceMs) {
           const key = digest([nextIdentity, bucket.id, window.slot, window.durationMinutes, window.resetsAt]);
           emit("quota_reset", { bucketId: bucket.id, slot: window.slot, durationMinutes: window.durationMinutes,
             previousResetsAt: prior.resetsAt, resetsAt: window.resetsAt, remainingPercent: window.remainingPercent }, key);
@@ -68,7 +76,7 @@ export function recognize(previous: MonitorState | null, observation: MonitorObs
         // Keep high-water boundaries when a server sends an older cached window.
         if (prior?.durationMinutes === next.durationMinutes && prior.resetsAt !== null
           && (next.resetsAt === null || Date.parse(next.resetsAt) < Date.parse(prior.resetsAt))) {
-          if (bucket.id === options.limitId) regressed = true;
+          if (bucket.id === options.limitId && (boundaryDelta === null || -boundaryDelta > resetBoundaryToleranceMs)) regressed = true;
           continue;
         }
         if (index < 0) state.windows.push(next); else state.windows[index] = next;

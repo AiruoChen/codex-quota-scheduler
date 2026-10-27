@@ -94,7 +94,7 @@ try {
   assert.equal((await readInstance(configPath)).pid, record.pid, "No restart before confirmation");
   await controlDebugger.evaluate("window.desktopLifecycle.command('keep-open')");
   checkpoint = "tray-and-notifications";
-  const tray = await trayAcceptance(pageDebugger, controlDebugger, profile, configPath, artifacts, child.pid);
+  const tray = await trayAcceptance(pageDebugger, controlDebugger, profile, configPath, artifacts, child.pid, step => { checkpoint = step; });
   secondary = spawn(executable, [...prefix, "--data-dir", profile], { cwd: artifacts, env, windowsHide: true, stdio: "ignore" });
   const secondaryExit = await Promise.race([
     new Promise((done, reject) => { secondary.once("error", reject); secondary.once("exit", done); }),

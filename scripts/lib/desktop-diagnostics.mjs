@@ -4,7 +4,8 @@ import { join } from "node:path";
 /** Public CI output contains fixed labels and scalar assertion results, never raw errors. */
 export function smokeFailureSummary(checkpoint, error, diagnostic = null) {
   const message = error instanceof Error ? error.message : "";
-  const reason = message.startsWith("Desktop UI did not become ready:") ? "UI_NOT_READY"
+  const nativeClose = /^NATIVE_CLOSE_(?:UNSUPPORTED|SYSTEM_UNAVAILABLE|TIMEOUT|WINDOW_MISSING|WINDOW_AMBIGUOUS|POST_FAILED|FAILED)$/.test(message);
+  const reason = nativeClose ? message : message.startsWith("Desktop UI did not become ready:") ? "UI_NOT_READY"
     : message.startsWith("Desktop debugger timeout:") ? "DEBUGGER_TIMEOUT"
     : message.startsWith("Native config picker automation failed:") ? "NATIVE_PICKER_FAILED"
     : error?.code === "ERR_ASSERTION" ? "ASSERTION_FAILED" : "SMOKE_CHECK_FAILED";

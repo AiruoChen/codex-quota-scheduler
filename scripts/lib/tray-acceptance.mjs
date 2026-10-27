@@ -7,7 +7,8 @@ import { readInstance } from "../../dist/src/runtime/instance.js";
 import { closeWindow } from "./close-window.mjs";
 
 /** Model fixtures stay in the owned mock database. No task is submitted to Codex. */
-export async function trayAcceptance(page, control, profile, configPath, directory, processId) {
+export async function trayAcceptance(page, control, profile, configPath, directory, processId, checkpoint = () => {}) {
+  checkpoint("tray-ready");
   await control.wait("window.desktopLifecycle.read().then(v=>v.desktop.trayAvailable)");
   const before = await readInstance(configPath);
   const statePath = join(profile, "desktop-state.json");
@@ -17,19 +18,26 @@ export async function trayAcceptance(page, control, profile, configPath, directo
     await delay(100);
   }
   await control.evaluate("window.desktopLifecycle.command('show')");
+  await page.wait("document.visibilityState==='visible' && document.hasFocus()");
+  checkpoint("tray-native-close");
   await closeWindow(page, processId);
+  checkpoint("tray-close-notice");
   await control.wait("window.desktopLifecycle.read().then(v=>v.desktop.closeNotice && v.phase==='running')");
-  assert.equal(await page.evaluate("document.visibilityState"), "hidden");
+  await page.wait("document.visibilityState==='hidden'");
+  checkpoint("tray-hide");
   await control.evaluate("window.desktopLifecycle.command('hide')");
   await control.wait("window.desktopLifecycle.read().then(v=>v.desktop.hidden)");
   assert.equal((await readInstance(configPath)).pid, before.pid);
+  checkpoint("tray-pause");
   await control.evaluate("window.desktopLifecycle.command('pause')");
+  checkpoint("tray-preferences");
   await control.evaluate("window.desktopLifecycle.command('notifications-toggle')");
   await control.evaluate("window.desktopLifecycle.command('quota-notifications-toggle')");
   const preferences = JSON.parse(await readFile(statePath, "utf8"));
   assert.equal(preferences.settings.enabled, false);
   assert.equal(preferences.settings.quotaReset, true);
   assert.equal(preferences.settings.closeExplained, true);
+  checkpoint("tray-notification-fixture");
   const store = new SqliteStore(join(profile, "data/state.sqlite"));
   let run;
   try {
@@ -40,6 +48,7 @@ export async function trayAcceptance(page, control, profile, configPath, directo
     store.execution.event(run.id, "execution_finished", { status: "succeeded" });
     await store.runs.update(run.id, { status: "succeeded", output: "PRIVATE_SYNTHETIC_TRAY_OUTPUT" }, "running");
   } finally { store.close(); }
+  checkpoint("tray-notification-delivery");
   await control.wait("window.desktopLifecycle.read().then(v=>v.desktop.notices.some(n=>n.title.includes('任务已完成')))");
   const view = await control.evaluate("window.desktopLifecycle.read()");
   const notice = view.desktop.notices.find((item) => item.title.includes("任务已完成"));
@@ -47,13 +56,16 @@ export async function trayAcceptance(page, control, profile, configPath, directo
   assert.equal(notice.delivery, "disabled");
   assert.ok(!JSON.stringify(view.desktop.notices).includes("PRIVATE_SYNTHETIC"));
   assert.ok(!JSON.stringify(view.desktop.notices).includes(directory));
+  checkpoint("tray-notification-target");
   await control.evaluate(`window.desktopLifecycle.openNotice(${JSON.stringify(notice.id)})`);
   await page.wait(`document.getElementById('run-dialog')?.open && document.getElementById('run-detail').textContent.includes('${run.id}')`);
   await page.evaluate("document.getElementById('run-dialog').close();location.hash='#overview'");
+  checkpoint("tray-notification-dedupe");
   await control.evaluate("window.desktopLifecycle.command('hide')");
   assert.equal(await control.evaluate("window.desktopLifecycle.read().then(v=>v.desktop.closeNotice)"), false);
   await delay(3200);
   assert.equal(await control.evaluate("window.desktopLifecycle.read().then(v=>v.desktop.notices.length)"), view.desktop.notices.length);
+  checkpoint("tray-notification-history");
   await control.evaluate("window.desktopLifecycle.command('status')");
   await control.evaluate("document.getElementById('notification-history').scrollIntoView()");
   const screenshot = await control.call("Page.captureScreenshot", { format: "png" });

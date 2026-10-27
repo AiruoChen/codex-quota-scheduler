@@ -184,6 +184,29 @@ test("同一观察里的多个窗口刷新只提供一次触发", async () => {
   } finally { await env.cleanup(); }
 });
 
+test("刷新调度不会把一秒时间差当作新触发，已有队列保持未领取", async () => {
+  const env = await setup("refresh");
+  try {
+    await env.add("one"); env.repo.enqueue("one"); env.repo.resume();
+    env.monitorRepo.record({ snapshot: env.quota(10, 10, epoch + 60000) });
+    const token = env.repo.acquire();
+    for (const reset of [epoch + 59000, epoch + 60000, epoch + 61000]) {
+      env.advance(1000);
+      const update = env.monitorRepo.record({ snapshot: env.quota(10, 10, reset) });
+      assert.equal(update.state.availability.status, "available");
+      assert.equal(update.events.filter(event => event.type === "quota_reset").length, 0);
+      assert.deepEqual(env.repo.claimNext(token, update), { action: "wait", reason: "awaiting_refresh" });
+    }
+    env.advance(57000);
+    const boundary = env.monitorRepo.record({ snapshot: env.quota(10, 10, epoch + 61000) });
+    assert.equal(boundary.events.filter(event => event.type === "quota_reset").length, 0);
+    assert.deepEqual(env.repo.claimNext(token, boundary), { action: "wait", reason: "awaiting_refresh" });
+    assert.equal(env.repo.status().queue[0]?.status, "queued");
+    env.repo.release(token);
+    assert.equal(await readFile(env.trace, "utf8").catch(() => ""), "");
+  } finally { await env.cleanup(); }
+});
+
 test("预检查等待额度可重试同一记录，未发送指令不丢失刷新触发", async () => {
   const env = await setup("refresh");
   try {

@@ -56,3 +56,21 @@ test("U01: account changes during catalog reads discard the whole response", asy
   try { await assert.rejects(env.catalog.models(), { code: "CATALOG_SCOPE_CHANGED" }); }
   finally { await env.cleanup(); }
 });
+
+test("U03 regression: projects can exist while every chat is officially unassigned; all-chat lookup remains usable", async () => {
+  const env = await setup("catalog-unassigned");
+  try {
+    const projects = await env.catalog.projects(); assert.ok(projects.items.length);
+    assert.equal((await env.catalog.threads(projects.items[0]!.id, undefined, projects.scope)).items.length, 0);
+    const all = await env.catalog.threads(undefined, undefined, projects.scope);
+    assert.equal(all.items.length, 3); assert.ok(all.items.every(thread => thread.projectKnown && thread.projectId === null));
+    assert.ok(all.items.some(thread => thread.name === "Named fixture chat"));
+    assert.equal((await env.catalog.threads("none", undefined, projects.scope)).items.length, 3);
+    const trace = (await readFile(env.trace, "utf8")).trim().split("\n").map(line => JSON.parse(line) as { method?: string; params?: Record<string, unknown> });
+    const queries = trace.filter(request => request.method === "thread/list");
+    assert.equal(Object.hasOwn(queries[1]!.params!, "projectId"), false);
+    assert.equal(queries[2]!.params!.projectId, null);
+    assert.ok(queries.every(request => request.params!.useStateDbOnly === true));
+    assert.equal(trace.some(request => ["thread/resume", "thread/start", "turn/start"].includes(request.method ?? "")), false);
+  } finally { await env.cleanup(); }
+});

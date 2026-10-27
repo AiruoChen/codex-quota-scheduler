@@ -79,11 +79,12 @@
 <div class="dialog-heading"><div><span class="eyebrow">任务编辑</span><h2 id="editor-title">新建任务</h2></div><button type="button" data-close="task-dialog" class="icon-button" aria-label="关闭任务编辑">×</button></div>
 <div class="form-grid"><label>任务名称<input name="name" required maxlength="150"></label><label>会话方式<select name="session"><option value="new">新建会话</option><option value="resume">继续已有会话</option></select></label>
 <label id="target-mode-row">新会话工作方式<select name="targetMode"><option value="folder">本地文件夹模式</option><option value="project">已有 Codex 项目</option><option value="unassigned">无项目会话</option></select></label>
-<label id="catalog-project-row">Codex 项目<select name="projectId"><option value="">请选择项目</option><option value="none">无项目会话</option></select></label>
+<label id="catalog-project-row">Codex 项目<select name="projectId"><option value="">请选择项目</option><option value="none">接口未关联项目的会话</option></select></label>
 <label id="catalog-thread-row">Codex 会话（任务）<select name="threadId"><option value="">请选择会话</option></select></label>
+<div id="thread-catalog-tools" class="full" hidden><p id="thread-status" class="hint" role="status" aria-live="polite"></p><button id="threads-retry" type="button">重新读取会话</button><button id="threads-all" type="button" hidden>查看全部会话</button><button id="threads-more" type="button" hidden>加载更多会话</button></div>
 <div id="project-directory-row" class="full"><label>本次工作目录<input name="projectDir" required placeholder="本地文件夹模式使用的目录"></label><button id="choose-project" type="button">选择项目文件夹…</button></div>
 <label id="project-cwd-row">本次工作目录（接口未标识主目录，请确认）<select name="projectCwd"><option value="">无业务文件夹 / 由客户端管理</option></select></label>
-<div class="full"><button id="catalog-refresh" type="button">刷新模型、项目及会话</button><button id="threads-more" type="button" hidden>加载更多会话</button><p id="catalog-status" class="hint"></p><pre id="task-environment" class="hint"></pre><div id="writable-roots"></div></div>
+<div class="full"><button id="catalog-refresh" type="button">刷新模型、项目及会话</button><p id="catalog-status" class="hint"></p><pre id="task-environment" class="hint"></pre><div id="writable-roots"></div></div>
 <label>优先级<input name="priority" type="number" min="0" max="1000" value="10" required></label><label class="check-label"><input name="enabled" type="checkbox" checked>启用此任务</label>
 <label class="full">指令<textarea name="prompt" rows="14" required placeholder="明确任务范围、预期结果与验证方式"></textarea><span id="prompt-count" class="subtle"></span></label>
 <label>文件访问权限<select name="sandbox"><option value="read-only">只读</option><option value="workspace-write">允许修改明确确认的目录</option></select></label><label>最长运行时间（秒）<input name="timeout" type="number" min="1" max="86400" value="900" required></label>

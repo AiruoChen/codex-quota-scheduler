@@ -43,8 +43,11 @@ input.on("line", (line) => {
   if (message.method === "project/list") { result({ data: [{ id: message.params.cursor ? "official-empty-project" : "official-project-1", name: "Official fixture project", roots: message.params.cursor ? [] : [{ path: cwd }, { path: cwd + "/second" }] }], nextCursor: scenario === "catalog-paged" && !message.params.cursor ? "projects-page2" : null }); return; }
   if (message.method === "project/read") { result({ project: { id: message.params.projectId, name: "Official fixture project", roots: message.params.projectId === "official-empty-project" ? [] : [{ path: cwd }, { path: cwd + "/second" }] } }); return; }
   if (message.method === "thread/list") {
-    result({ data: [{ id: "named-thread", name: "Named fixture chat", cwd, projectId: "official-project-1" },
-      { id: "unassigned-thread", name: "Unassigned fixture chat", cwd, projectId: null }, { id: "unknown-thread", name: null, cwd }], nextCursor: null }); return;
+    let threads = [{ id: "named-thread", name: "Named fixture chat", cwd, projectId: "official-project-1" },
+      { id: "unassigned-thread", name: "Unassigned fixture chat", cwd, projectId: null }, { id: "unknown-thread", name: null, cwd }];
+    if (scenario === "catalog-unassigned") threads = threads.map(thread => ({ ...thread, projectId: null }));
+    if (Object.hasOwn(message.params, "projectId")) threads = threads.filter(thread => Object.hasOwn(thread, "projectId") && thread.projectId === message.params.projectId);
+    result({ data: threads, nextCursor: null }); return;
   }
   if (message.method === "account/read") {
     accountReads++;

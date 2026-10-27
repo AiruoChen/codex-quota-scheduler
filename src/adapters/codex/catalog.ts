@@ -63,7 +63,7 @@ export class CodexCatalog {
   threads(projectId?: string, cursor?: string, expectedScope?: string): Promise<CatalogPage<ThreadChoice>> {
     return this.read(async (client, scope) => {
       const result = await client.request("thread/list", { limit: 100, sourceKinds: ["cli", "vscode", "appServer", "exec"], useStateDbOnly: true,
-        ...(projectId && projectId !== "none" ? { projectId } : {}), ...(cursor ? { cursor } : {}) });
+        ...(projectId ? { projectId: projectId === "none" ? null : projectId } : {}), ...(cursor ? { cursor } : {}) });
       if (!isRecord(result) || !Array.isArray(result.data)) throw new AppError("CODEX_PROTOCOL_ERROR", "会话列表格式无效。");
       const items = result.data.map(thread).filter(item => projectId === "none" ? item.projectKnown && item.projectId === null : !projectId || item.projectId === projectId);
       return { scope, items, nextCursor: text(result.nextCursor) };

@@ -1,14 +1,19 @@
 import assert from "node:assert/strict";
 import { appendFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { createInterface } from "node:readline";
 
 const value = (name) => { const index = process.argv.indexOf(name); return index < 0 ? undefined : process.argv[index + 1]; };
 const scenario = value("--scenario") ?? "success";
 const trace = value("--trace");
 if (process.argv.includes("--version")) { console.log("codex-cli 0.160.0-fixture"); process.exit(0); }
+const audit = value("--audit-file");
+const record = (event, key) => { if (audit) appendFileSync(audit, JSON.stringify({ event, pid: process.pid, ...(key ? { key } : {}) }) + "\n"); };
+record("spawn"); process.on("exit", () => record("exit"));
 assert.ok(process.argv.includes("app-server"));
 let initialized = false;
 let accountReads = 0;
+let quotaReads = 0;
 let cwd = value("--project") ?? process.cwd();
 let pendingApproval = false;
 const send = (message) => process.stdout.write(JSON.stringify(message) + "\n");
@@ -34,11 +39,16 @@ input.on("line", (line) => {
   assert.ok(initialized);
   if (message.method === "account/read") {
     accountReads++;
-    result({ account: { type: "chatgpt", email: scenario === "account-change" && accountReads > 1 ? "changed@example.test" : "user@example.test", planType: "plus" }, requiresOpenaiAuth: true });
+    result({ account: { type: "chatgpt", email: ["unknown-account", "workspace-account"].includes(scenario) ? null
+      : scenario === "account-change" && accountReads > 1 ? "changed@example.test" : "user@example.test",
+      ...(scenario === "workspace-account" ? { workspaceId: "fixture-workspace" } : {}), planType: "plus" }, requiresOpenaiAuth: true });
     return;
   }
   if (message.method === "account/rateLimits/read") {
-    result({ rateLimits: { limitId: "codex", primary: { usedPercent: scenario === "quota-wait" ? 100 : 10, windowDurationMins: 300, resetsAt: 2000000000 }, secondary: null } });
+    quotaReads++;
+    const resetsAt = scenario === "boundary-refresh" && quotaReads > 1 ? 2000003600 : 2000000000;
+    result({ rateLimits: { limitId: "codex", primary: { usedPercent: scenario === "quota-wait" || scenario === "quota-wait-after-refresh" && quotaReads > 1 ? 100 : 10,
+      windowDurationMins: 300, resetsAt }, secondary: scenario === "missing-weekly" ? null : { usedPercent: 10, windowDurationMins: 10080, resetsAt } } });
     return;
   }
   if (message.method === "thread/read") {
@@ -55,6 +65,7 @@ input.on("line", (line) => {
     return;
   }
   if (message.method === "turn/start") {
+    record("submit", createHash("sha256").update(JSON.stringify(message.params.input)).digest("hex"));
     assert.equal(message.params.cwd, cwd);
     assert.equal(message.params.approvalPolicy, "on-request");
     assert.equal(message.params.sandboxPolicy.networkAccess, false);
@@ -91,7 +102,7 @@ input.on("line", (line) => {
       notification("item/agentMessage/delta", { itemId: "partial", delta: "work in progress" });
       return;
     }
-    setTimeout(messages, 20);
+    setTimeout(messages, scenario === "lifecycle-success" ? 3000 : scenario === "slow-success" ? 1200 : 20);
     return;
   }
   if (message.method === "turn/interrupt") {

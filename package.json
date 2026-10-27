@@ -1,10 +1,10 @@
 {
   "name": "codex-quota-scheduler",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Modular local Codex quota monitor and task scheduler",
   "type": "module",
-  "main": "dist/src/desktop/main.js",
+  "main": "dist/src/desktop/bootstrap.js",
   "engines": {
     "node": ">=22.12.0"
   },
@@ -18,7 +18,13 @@
     "package": "npm run build && node scripts/package.mjs",
     "desktop": "npm run build && electron .",
     "package:desktop": "npm run build && node scripts/package-desktop.mjs",
-    "smoke:desktop": "npm run build && node --experimental-sqlite scripts/smoke-desktop.mjs"
+    "package:installer": "npm run package:desktop && node scripts/package-installer.mjs",
+    "smoke:desktop": "npm run build && node --experimental-sqlite scripts/smoke-desktop.mjs",
+    "smoke:lifecycle": "npm run build && node --experimental-sqlite scripts/smoke-lifecycle.mjs",
+    "smoke:installer": "npm run build && node --experimental-sqlite scripts/smoke-installer.mjs --package .release/desktop/CodexQuotaScheduler-win32-x64",
+    "soak:desktop": "npm run build && node --experimental-sqlite scripts/soak-desktop.mjs",
+    "acceptance": "npm run build && node scripts/acceptance.mjs",
+    "verify:release": "npm run build && node scripts/verify-release.mjs"
   },
   "devDependencies": {
     "@electron/packager": "20.3.0",

@@ -56,7 +56,7 @@ account/read（refreshToken=false）、account/rateLimits/read。成功或失败
 - `TaskExecutor.execute()`：接收持久化运行快照、取消信号与事件接收器，返回 `ExecutionOutcome`；运行状态由应用层落盘。
 - `TaskRepository` / `RunRepository`：分别管理版本化任务定义、不可变快照和运行状态。
 - `Clock`：业务逻辑可使用固定时间测试，避免依赖真实等待。
-- `Notifier`：预留本地通知实现。
+- `Notifier`：原预留演示端口；桌面通知使用独立领域策略与 NoticeChannel 端口，见文末。
 
 协议返回先经 adapters/codex/normalize-quota.ts 转换，调度器只使用领域模型。
 `null` 表示未知，不能转换成零消耗或额度已刷新。没有返回五小时窗口时不补造窗口。
@@ -176,7 +176,7 @@ HTTP 适配器使用 Node 内置 http，仅绑定 127.0.0.1，检查准确 Host 
 
 固定事件日志大小轮转，不记录提示词、输出、账户或路径；日志写入失败不会打断已提交任务的落盘流程。
 构建复制静态资源到 dist，便携目录只包含运行代码、示例与文档，无第三方运行依赖。
-托盘、原生通知、开机启动和安装器留待后续系统集成。
+桌面托盘与原生通知已实现，安装器及数据迁移见文末，开机启动留待后续系统集成。
 
 ## 最小桌面客户端
 
@@ -185,3 +185,44 @@ desktop/backend.ts 在后台子进程设置 Node 模式，使用 Electron 自带
 自有后台通过已验证的实例停止并等待退出，外部服务只连接不停止；父进程断开触发正常收尾，不强杀或自动修复数据库。
 CLI 和桌面打包共用源码派生的文件白名单，桌面包额外包含外壳和启动页，无开发依赖或用户数据。
 具体选型依据及后续边界见 DESKTOP-TECH-DECISION.md。
+
+DesktopLifecycle 使用领域 BackendSession 接口协调互斥的启动、停止与重启，健康检查只重验连接，不自动创建新进程。
+独立状态窗口使用受限生命周期 preload，管理窗口的隔离 preload 只提供目录选择；校验位于 adapters/electron，管理页没有 Node 权限、生命周期或通用 IPC。
+ManagementService 在停止入口同步关闭新操作并暂停自有调度，wait 不中断活动执行，cancel 可以显式升级等待过程。
+HTTP 控制状态/取消接口在等待期间可用；后台工作、处理器和响应排空后关闭剩余连接，再关闭存储。
+完整退出语义及验证见 DESKTOP-LIFECYCLE.md。
+
+## GUI 基础框架与概览
+
+management/gui 使用严格 TypeScript ES 模块；api/state/shell/dom 提供公共请求、状态、路由及文本组件，页面各自维护呈现逻辑。
+contracts 只提供类型，浏览器运行时依赖被限制在 GUI 内；HTTP 静态资源使用 gui-assets 白名单，不开放 dist 目录或源码映射。
+ManagementService.state 提供 quota-display 展示模型及准确执行权关联的运行摘要，不增加前端派发算法。
+StateStore 合并并发查询并以服务端时间锚推进有效期；离线或到期先使额度未知，不能生成刷新事件。
+手动查询请求合并到现有 ContinuousQuotaMonitor，仍保留退避、事务检查点及刷新去重；停止监控后不由页面恢复循环。
+界面操作、模块边界及验收见 DESKTOP-GUI.md。
+
+运行历史分页通过 RunRepository.query 在 SQLite 执行参数化过滤，HTTP 只返回元数据。
+SelectedResource 合并当前详情读取并隔离旧选择响应，run-detail 保留选择、展开状态与阅读位置，clipboard 只提供用户发起的文本复制。
+recovery-model 提供问题说明，recovery 页面复用原检查、只读核对、事务应用与人工确认接口；没有新增远端恢复协议或自动修复入口。
+只读核对摘要属于当前后台会话，永久恢复审计仍由既有仓储保存。详见 DESKTOP-RUNS-RECOVERY.md。
+
+## 桌面托盘与通知
+
+domain/notifications 提供纯通知策略与固定脱敏文案；desktop/notifications 通过 NoticeChannel 端口组合系统显示，不让调度器依赖 Electron。
+storage/desktop-feed 在同步事务中读取既有事件及准确运行状态，以游标分页；只在对应结果已保存时产生终态通知。
+management/service 验证当前额度查询和账户边界，HTTP 桌面接口只返回白名单元数据，使用独立控制密钥与实例身份校验。
+desktop/notification-store 将偏好、游标、去重和有界本地记录一起原子保存后才尝试原生显示，损坏文件不会重建为空。
+adapters/electron 实现托盘和通知，desktop/visibility 协调首次说明及不可用回退；安全退出仍由原生命周期处理。
+通知点击只接受已存储记录 ID，并重新校验当前来源后定位准确运行；管理页面不获得通知控制或生命周期权限。
+系统显示为尽力请求，显示结果不明不盲目重试。规则、验证和发布边界见 DESKTOP-TRAY-NOTIFICATIONS.md。
+
+## 安装、备份与数据迁移
+
+installer/windows.nsi 使用维护版本 NSIS 构建当前用户安装器。构建脚本从既有运行文件白名单派生安装/卸载清单和发布哈希，不打包用户数据。
+安装器持有维护互斥，只查询进程而不关闭进程；安装版主进程先运行固定原生探针。路径预检拒绝重解析点，卸载只删除清单中文件。
+domain/data-transfer 定义预检和桌面展示模型。storage/profile-snapshot 用只读 SQLite 连接检查源模式、逻辑指纹与进程证据；保留写锁期间只做同步 SQLite 操作，由第二只读连接执行 VACUUM INTO。
+desktop/data-transfer 协调预检、备份、暂存转换、语义检查、暂停和最后的活动指针切换。原件不改写，失败保留备份和暂存证据，不合库、不解锁、不联系 Codex。
+配置、任务清单及文件权限检查在 SQLite 事务外进行；后台生命周期负责迁移前等待落盘，数据操作期间禁止重启、派发和退出竞态。
+adapters/electron/data-transfer-ipc 仅向本机状态窗口暴露固定操作，源文件由主进程原生选择器返回；管理页不获得文件接口。
+数据模式升级仍使用原有同步事务，增加活动/未知执行权保护。桌面升级先创建带清单的备份，较新模式或客户端版本拒绝写入。
+数据布局、恢复为新副本和手动升级语义见 DESKTOP-INSTALL-MIGRATION.md。

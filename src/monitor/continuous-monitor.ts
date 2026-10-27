@@ -8,8 +8,12 @@ export interface MonitorWaiter { sleep(ms: number, signal: AbortSignal): Promise
 const systemWaiter: MonitorWaiter = { sleep: async (ms, signal) => { await delay(ms, undefined, { signal }); } };
 
 export class ContinuousQuotaMonitor {
+  private requested = false;
   constructor(private readonly provider: QuotaProvider, readonly repository: MonitorRepository,
     private readonly clock: Clock = systemClock, private readonly waiter: MonitorWaiter = systemWaiter) {}
+
+  /** Coalesce GUI refresh requests into the existing loop, respecting retry backoff. */
+  requestSample(): void { this.requested = true; }
 
   async sample(signal?: AbortSignal): Promise<MonitorUpdate> {
     let observation;
@@ -31,6 +35,7 @@ export class ContinuousQuotaMonitor {
     try {
       for (let index = 0; index < samples && !signal.aborted; index++) {
         hint = false;
+        this.requested = false;
         const update = await this.sample(signal);
         await onUpdate(update);
         if (index + 1 >= samples || signal.aborted) break;
@@ -38,7 +43,7 @@ export class ContinuousQuotaMonitor {
         let wall = this.clock.now().getTime();
         let waited = 0;
         while (remaining > 0 && !signal.aborted) {
-          if (hint && update.state.failures === 0 && waited >= 1000) break;
+          if ((hint || this.requested) && update.state.failures === 0 && waited >= 1000) break;
           const step = Math.min(1000, remaining);
           await this.waiter.sleep(step, signal);
           const now = this.clock.now().getTime();

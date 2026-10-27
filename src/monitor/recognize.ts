@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { MonitorEvent, MonitorObservation, MonitorState, TrackedWindow } from "../domain/monitor.js";
 import type { QuotaSnapshot } from "../domain/quota.js";
-import { evaluateQuota, type QuotaPolicy } from "../domain/quota-policy.js";
+import { evaluateQuota, hasQuotaIdentity, type QuotaPolicy } from "../domain/quota-policy.js";
 
 export interface MonitorOptions extends QuotaPolicy { pollIntervalMs: number }
 export const digest = (value: unknown): string => createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -9,7 +9,7 @@ export const digest = (value: unknown): string => createHash("sha256").update(JS
 function identity(snapshot: QuotaSnapshot): string | null {
   if (snapshot.source === "mock") return "mock";
   const account = snapshot.account;
-  if (!account || !account.email && !account.workspaceId) return null;
+  if (!hasQuotaIdentity(account)) return null;
   return digest([snapshot.source, account.type, account.email, account.workspaceId, account.planType]);
 }
 

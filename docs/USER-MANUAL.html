@@ -53,7 +53,7 @@ code{font:0.9em/1.7 Consolas,"Cascadia Code",monospace;background:#eef3f4;paddin
 <h1>Codex 任务助手：用户使用手册</h1>
 <p>适用对象：没有编程基础，或只希望通过按钮管理 Codex 任务的用户。</p>
 <p>适用版本：完整的 <strong>0.3.0 Windows x64 测试客户端</strong>。编写日期：2026 年 10 月 27 日。</p>
-<p><strong>先确认版本，再照着操作。</strong> 请先向维护者取得完整的 0.3.0 测试安装包或便携目录。编写时仓库尚无公开发布的安装包；如果显示 0.1.0，或看不到本文中的六个页面、托盘和安装与数据迁移入口，先核对版本，不必反复寻找按钮。源码版本的说明放在附录 B、C，普通用户可以跳过。</p>
+<p><strong>先确认版本，再照着操作。</strong> 请取得完整的 0.3.0 测试安装包或便携目录。主分支已统一整合完整功能、审计修复和本手册；是否已有可下载安装包，请查看 Releases 页面，没有附件时向维护者索取匹配测试包。如果显示旧版本，或看不到本文中的六个页面、托盘和安装与数据迁移入口，先核对版本，不必反复寻找按钮。源码构建说明放在附录 B、C，普通用户可以跳过。</p>
 <p>浏览器阅读版：<a href="USER-MANUAL.html">USER-MANUAL.html</a>。下载后双击即可离线阅读；使用浏览器的打印功能可以另存为 PDF。阅读手册无需安装开发工具。</p>
 <p>在 GitHub 打开 HTML 文件时可能显示源码，请使用文件页面的“下载原始文件”功能，保存为 <code>.html</code> 文件后双击打开；也可以直接阅读当前 Markdown 版，不必下载。</p>
 <h2>目录</h2>
@@ -154,7 +154,7 @@ code{font:0.9em/1.7 Consolas,"Cascadia Code",monospace;background:#eef3f4;paddin
 <p>请保留同目录的文件和子文件夹。只复制一个 EXE 会导致程序无法运行。便携版默认也把个人数据放在用户数据目录，不是把所有数据放在 EXE 旁边。</p>
 <h3>3.5 怎样确认拿对了版本</h3>
 <p>打开“后台服务 → 安装与数据迁移…”，查看客户端版本。完整版本的主窗口左侧应有下一节列出的六个页面。</p>
-<p>若显示 0.1.0，或缺少本文按钮，请先索取完整包。重新下载同一份旧源码或重复安装旧包，不会补齐后续模块。</p>
+<p>若仍显示 0.1.0，或缺少本文按钮，请取得新的完整包并按升级步骤安装。自行构建时使用主分支 main，并先核对版本为 0.3.0。</p>
 <a class="section-anchor" id="section-4"></a>
 <h2>4. 认识两个窗口和六个页面</h2>
 <p>客户端有两个用途不同的窗口：</p>
@@ -496,7 +496,7 @@ code{font:0.9em/1.7 Consolas,"Cascadia Code",monospace;background:#eef3f4;paddin
 <h2>19. 常见问题速查</h2>
 <div class="table-scroll" role="region" aria-label="对照表" tabindex="0"><table><thead><tr><th scope="col">遇到的问题</th><th scope="col">先这样处理</th></tr></thead><tbody>
 <tr><td>下载 ZIP 后没有安装器</td><td>那通常是源码；索取完整测试包，或请协助者看附录 B</td></tr>
-<tr><td>界面缺少本手册里的按钮</td><td>核对是否为完整 0.3.0；编写时 <code>main</code> 仍为 0.1.0</td></tr>
+<tr><td>界面缺少本手册里的按钮</td><td>核对是否为完整 0.3.0；升级到匹配的新包，或由维护者从 main 重新构建</td></tr>
 <tr><td>显示模拟体验，不能执行</td><td>安装并登录 CLI，将 <code>provider</code> 改为 <code>codex</code>，保存后重启后台</td></tr>
 <tr><td><code>CODEX_NOT_FOUND</code></td><td>检查安装，重开客户端；必要时填写 <code>codex.executable</code></td></tr>
 <tr><td>PowerShell 提示脚本被禁止</td><td>对 npm 使用 <code>npm.cmd</code>；标准 npm 安装的 Codex 可尝试 <code>codex.cmd --version</code>、<code>codex.cmd login</code>；不要全局降低执行策略</td></tr>
@@ -588,11 +588,11 @@ Windows 版本及系统类型：
 <p>npm 安装方式见 OpenAI 的 <a href="https://developers.openai.com/cookbook/examples/codex/using_goals_in_codex">Codex 使用准备示例</a>。安装最新 CLI 不代表本项目已验证所有未来版本；遇到协议不兼容时，先由维护者核对，不能用未知数据放行。</p>
 <p>CLI 安装或登录成功，只表示官方程序就绪。回到客户端，按第 7 节保存真实来源配置并重启，再查询额度。</p>
 <h3>B.2 从正确源码构建客户端</h3>
-<p><strong>先核对源码，再构建。</strong> 编写时 <code>main</code> 为 0.1.0，完整审计修复源码基线为 <code>413dd98112636a401ef1449e231550263a78c582</code>。若主分支尚未整合完整功能，不要用主分支生成一个旧包交给用户按本手册操作。</p>
-<p>有 Git 的维护者可以克隆仓库，并在此固定提交创建本地构建分支；如果已有克隆，先确认没有未保存的改动，再自行选择对应提交。以下是新建克隆的示例：</p>
+<p><strong>先核对源码，再构建。</strong> 使用本仓库的 <code>main</code> 主分支，打开 <code>package.json</code> 确认版本为 0.3.0。完整桌面模块、审计修复与本手册随本次主分支整合统一提供。需要复现某次候选包时，则使用该包报告中的准确提交，并记录构建来源。</p>
+<p>有 Git 的维护者可以克隆仓库并选择 main；如果已有克隆，先保留未提交改动，安全更新后核对所用分支和版本。以下是新建克隆的示例：</p>
 <pre aria-label="可复制的 PowerShell 命令"><code>git clone https://github.com/AiruoChen/codex-quota-scheduler.git</code></pre>
 <pre aria-label="可复制的 PowerShell 命令"><code>Set-Location codex-quota-scheduler</code></pre>
-<pre aria-label="可复制的 PowerShell 命令"><code>git switch -c build-client-030 413dd98112636a401ef1449e231550263a78c582</code></pre>
+<pre aria-label="可复制的 PowerShell 命令"><code>git switch main</code></pre>
 <p>然后在这个源码文件夹中逐条运行：</p>
 <pre aria-label="可复制的 PowerShell 命令"><code>npm.cmd ci</code></pre>
 <pre aria-label="可复制的 PowerShell 命令"><code>npm.cmd run check</code></pre>
@@ -602,15 +602,15 @@ Windows 版本及系统类型：
 <pre aria-label="可复制的 PowerShell 命令"><code>npm.cmd run desktop</code></pre>
 <p>需要生成完整安装器时运行：</p>
 <pre aria-label="可复制的 PowerShell 命令"><code>npm.cmd run package:installer</code></pre>
-<p>默认安装器输出在源码的 <code>.release/installer/</code>，便携目录输出在 <code>.release/desktop/</code>。打包可能需要下载构建工具；已有同名输出时不会覆盖。重复构建及正式验收的参数见固定基线的 <a href="https://github.com/AiruoChen/codex-quota-scheduler/blob/413dd98112636a401ef1449e231550263a78c582/docs/DESKTOP-INSTALL-MIGRATION.md">安装与迁移说明</a> 和 <a href="https://github.com/AiruoChen/codex-quota-scheduler/blob/413dd98112636a401ef1449e231550263a78c582/docs/DESKTOP-ACCEPTANCE-RELEASE.md">验收与发布说明</a>。</p>
+<p>默认安装器输出在源码的 <code>.release/installer/</code>，便携目录输出在 <code>.release/desktop/</code>。打包可能需要下载构建工具；已有同名输出时不会覆盖。重复构建及正式验收的参数见主分支的 <a href="https://github.com/AiruoChen/codex-quota-scheduler/blob/main/docs/DESKTOP-INSTALL-MIGRATION.md">安装与迁移说明</a> 和 <a href="https://github.com/AiruoChen/codex-quota-scheduler/blob/main/docs/DESKTOP-ACCEPTANCE-RELEASE.md">验收与发布说明</a>。</p>
 <p>交付测试包时一并提供版本、校验值和适用手册。生成安装器不等于完成正式签名、真实账户任务、独立 Windows 环境和连续 24 小时验收。</p>
 <h3>B.3 网页方式和桌面方式不要混用配置</h3>
 <p>源码中的 <code>npm.cmd run ui</code> 打开的是本机网页管理方式。它默认使用源码目录里的个人配置；桌面客户端默认使用 Windows 用户数据目录里的配置。两者可能是不同数据库和不同队列。</p>
 <p>网页方式没有桌面托盘、原生目录选择和安装迁移窗口。需要统一已有数据时，按明确配置选择或导入副本流程操作，不同时运行两份会重复派发的队列。</p>
 <a class="section-anchor" id="appendix-c"></a>
 <h2>附录 C. 手册依据与版本维护</h2>
-<p>本手册按完整 0.3.0 测试客户端编写，代码依据为 <code>413dd98112636a401ef1449e231550263a78c582</code> 的界面、任务、执行、调度、恢复及数据迁移实现。正文里的按钮名称取自该版本；各阶段旧文档中的历史测试数量不作为当前使用条件。</p>
-<p>编写时通过 GitHub 核对：<code>main</code> 的提交为 <code>3a5a0dcd0d8178f24d940532ccc11c5898f38eb9</code>，版本 0.1.0；#1–#9 虽均已合并，但合并目标分支不同，完整功能仍需向主分支整合。未假设有公开安装器附件或已发布稳定版。</p>
+<p>本手册随完整 0.3.0 主分支整合更新。最初的界面与逻辑核对依据为审计修复提交 <code>413dd98112636a401ef1449e231550263a78c582</code>；本次保留其完整功能与四项修复，并与已合并的用户手册一起交付。各阶段旧文档中的历史测试数量不作为当前使用条件。</p>
+<p>0.3.0 整合统一了版本文件、启动入口、完整功能与验证流程，源码构建使用 main。测试与候选包以对应提交的 CI 和验收报告为准；候选包生成不代表已发布正式稳定版，公开下载入口以实际 Releases 附件为准。</p>
 <p>Codex CLI 安装、登录与 Node.js 获取分别参考上文所链接的官方资料。账户权限、额度窗口和模型支持会变化，以用户当前官方账户和真实查询为准。本手册不会固定账户、模型名称或账户刷新周期。</p>
 <p>维护者更新操作步骤时，优先编辑 <code>docs/USER-MANUAL.md</code>，再运行：</p>
 <pre aria-label="可复制的 PowerShell 命令"><code>node scripts/build-user-manual.mjs</code></pre>

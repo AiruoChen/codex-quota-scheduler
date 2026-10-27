@@ -2,11 +2,13 @@ import type { ExecutionOutcome, ExecutionSink, TaskRun } from "../../domain/task
 import { AppError } from "../../shared/errors.js";
 import { isRecord } from "../../shared/validation.js";
 import type { StdioRpcClient } from "./rpc-client.js";
+import type { QuotaAvailability } from "../../domain/quota-policy.js";
 
 type Terminal = { status: string } | { error: AppError };
 
 /** Owns one turn, including notifications that arrive before turn/start responds. */
-export async function runTurn(client: StdioRpcClient, threadId: string, run: TaskRun, signal: AbortSignal, sink: ExecutionSink): Promise<ExecutionOutcome> {
+export async function runTurn(client: StdioRpcClient, threadId: string, run: TaskRun, signal: AbortSignal, sink: ExecutionSink,
+  beforeSubmit: () => QuotaAvailability): Promise<ExecutionOutcome> {
   const messages = new Map<string, { text: string; phase: string | null }>();
   let messageBytes = 0;
   let turnId: string | undefined;
@@ -91,6 +93,8 @@ export async function runTurn(client: StdioRpcClient, threadId: string, run: Tas
     if (signal.aborted) return { status: signal.reason === "timeout" ? "failed" : "cancelled", output: "", error: signal.reason === "timeout" ? "EXECUTION_TIMEOUT: 提交前超时。" : null };
     const execution = run.taskSnapshot.execution;
     const sandbox = execution?.sandbox ?? "read-only";
+    const quota = beforeSubmit();
+    if (quota.status !== "available") return { status: "waiting_quota", output: "", error: `QUOTA_WAIT: ${quota.reason}` };
     sink.submitted();
     submitted = true;
     const response = await client.request("turn/start", {

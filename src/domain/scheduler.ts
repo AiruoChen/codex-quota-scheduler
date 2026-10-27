@@ -8,13 +8,14 @@ export interface SchedulerStatus {
   reason: string | null;
   worker: { pid: number; startedAt: string; trigger: SchedulerTrigger } | null;
   attention: string[];
-  queue: { runId: string; taskId: string; revision: number; status: TaskRun["status"]; priority: number }[];
+  queue: { runId: string; taskId: string; revision: number; status: TaskRun["status"]; priority: number;
+    name: string; projectDir: string; createdAt: string; sequence: number; enabled: boolean | null }[];
 }
 export type DispatchDecision = { action: "wait"; reason: string }
   | { action: "run"; run: TaskRun; expectedAccount: NonNullable<QuotaSnapshot["account"]> };
 
 export interface SchedulerRepository {
-  enqueue(taskId: string): TaskRun;
+  enqueue(taskId: string, expectedRevision?: number): TaskRun;
   remove(runId: string): TaskRun;
   status(): SchedulerStatus;
   pause(reason?: string): void;

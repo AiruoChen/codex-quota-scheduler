@@ -4,6 +4,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 import { AppServerQuotaFeed } from "../src/adapters/codex/quota-feed.js";
 import { defaultCodexOptions } from "../src/adapters/codex/launcher.js";
 import { normalizeQuota } from "../src/adapters/codex/normalize-quota.js";
@@ -297,7 +298,16 @@ for (const scenario of ["monitor-notify", "monitor-exit"]) test(`${scenario} 通
     assert.equal(events.filter((event) => event.method === "account/rateLimits/read").length, 2);
     const starts = events.filter((event) => typeof event.pid === "number");
     assert.equal(starts.length, scenario === "monitor-exit" ? 2 : 1);
-    for (const start of starts) assert.throws(() => process.kill(start.pid as number, 0));
+    for (const start of starts) {
+      // Windows can keep an exited process briefly visible after stdio closes.
+      let exited = false;
+      for (let attempt = 0; attempt < 40; attempt++) {
+        try { process.kill(start.pid as number, 0); }
+        catch { exited = true; break; }
+        await delay(50);
+      }
+      assert.ok(exited, "monitor child is reaped after shutdown");
+    }
     assert.equal(updates[1]?.state.failures, 0);
     assert.equal(resets(updates[1]!).length, 0);
   } finally { await feed.close(); store.close(); await rm(dir, { recursive: true, force: true }); }

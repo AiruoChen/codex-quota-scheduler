@@ -9,12 +9,17 @@ import { assertRecoveryClear, pauseForRecovery, recoveryEvent, readOrigin } from
 export class ExecutionRepository {
   constructor(private readonly db: Database, private readonly clock: Clock) {}
 
+  active(): { runId: string; ownerPid: number } | null {
+    const row = this.db.connection.prepare("SELECT run_id,owner_pid FROM execution_lock").get();
+    return row ? { runId: String(row.run_id), ownerPid: Number(row.owner_pid) } : null;
+  }
+
   claim(id: string): TaskRun {
     return this.db.transaction(() => this.claimInside(id));
   }
 
-  claimNew(taskId: string): TaskRun {
-    return this.db.transaction(() => this.claimInside(new SqliteRunRepository(this.db, this.clock).insert(taskId).id));
+  claimNew(taskId: string, expectedRevision?: number): TaskRun {
+    return this.db.transaction(() => this.claimInside(new SqliteRunRepository(this.db, this.clock).insert(taskId, expectedRevision).id));
   }
 
   /** Only call inside a synchronous database transaction. */

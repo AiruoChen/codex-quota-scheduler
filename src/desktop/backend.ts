@@ -5,6 +5,8 @@ import { isRecord } from "../shared/validation.js";
 import { localProcesses } from "../shared/process.js";
 import { setTimeout as delay } from "node:timers/promises";
 import type { BackendSession, DesktopConnection, RuntimeControlStatus, ShutdownMode } from "../domain/lifecycle.js";
+import { desktopRequest } from "../adapters/http/desktop-protocol.js";
+import type { FeedRequest, DesktopFeed } from "../domain/notifications.js";
 
 export type { DesktopConnection } from "../domain/lifecycle.js";
 export interface BackendLaunch { executable: string; entry: string; electron: boolean; timeoutMs?: number }
@@ -84,6 +86,15 @@ export class DesktopBackend implements BackendSession {
   }
 
   async status(): Promise<RuntimeControlStatus> { return inspectRuntime(await this.current()); }
+
+  async desktopFeed(request: FeedRequest): Promise<DesktopFeed> {
+    const result = await desktopRequest(await this.current(), "feed", request);
+    return result!;
+  }
+  async pauseDispatch(): Promise<void> {
+    const record = await this.current(); await inspectRuntime(record);
+    await desktopRequest(await this.current(), "pause");
+  }
 
   async escalate(): Promise<void> {
     try { await contactInstance(await this.current(), "cancel"); }

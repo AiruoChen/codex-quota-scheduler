@@ -46,6 +46,7 @@ export const migrations = [
   `CREATE TABLE execution_origins (run_id TEXT PRIMARY KEY REFERENCES runs(id), data_json TEXT NOT NULL) STRICT;
    CREATE TABLE recovery_events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT REFERENCES runs(id), created_at TEXT NOT NULL, type TEXT NOT NULL, data_json TEXT NOT NULL) STRICT;
    CREATE INDEX recovery_events_by_run ON recovery_events(run_id, sequence);`,
+  `INSERT OR IGNORE INTO metadata VALUES ('database_identity',lower(hex(randomblob(16))));`,
 ];
 
 export class Database {

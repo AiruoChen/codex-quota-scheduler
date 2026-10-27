@@ -11,6 +11,7 @@ import { desktopDiagnostics } from "./lib/desktop-diagnostics.mjs";
 import { guiAcceptance } from "./lib/gui-acceptance.mjs";
 import { tasksQueueAcceptance } from "./lib/tasks-queue-acceptance.mjs";
 import { runsRecoveryAcceptance } from "./lib/runs-recovery-acceptance.mjs";
+import { trayAcceptance } from "./lib/tray-acceptance.mjs";
 
 const args = process.argv.slice(2);
 if (args.length && (args.length !== 2 || args[0] !== "--packaged")) throw new Error("Usage: smoke-desktop.mjs [--packaged path/to/client.exe]");
@@ -88,6 +89,8 @@ try {
   assert.equal(await controlDebugger.evaluate("window.desktopLifecycle.read().then(v => v.intent)"), "restart");
   assert.equal((await readInstance(configPath)).pid, record.pid, "No restart before confirmation");
   await controlDebugger.evaluate("window.desktopLifecycle.command('keep-open')");
+  checkpoint = "tray-and-notifications";
+  const tray = await trayAcceptance(pageDebugger, controlDebugger, profile, configPath, artifacts, child.pid);
   secondary = spawn(executable, [...prefix, "--data-dir", profile], { cwd: artifacts, env, windowsHide: true, stdio: "ignore" });
   const secondaryExit = await Promise.race([
     new Promise((done, reject) => { secondary.once("error", reject); secondary.once("exit", done); }),
@@ -119,7 +122,7 @@ try {
   assert.equal(await evaluate("(async () => (await (await fetch('/api/tasks')).json()).some(t => t.id === 'desktop-smoke'))()"), true);
   assert.deepEqual(pageDebugger.errors, []);
   assert.deepEqual(controlDebugger.errors, []);
-  await call("Browser.close").catch(() => {});
+  await controlDebugger.evaluate("window.desktopLifecycle.command('exit')").catch(() => {});
   const code = await Promise.race([exited, delay(15000, undefined, { ref: false }).then(() => { throw new Error("Desktop did not finish graceful shutdown"); })]);
   assert.equal(code, 0, stderr);
   assert.equal(await readInstance(configPath), null);
@@ -129,7 +132,7 @@ try {
     assert.ok(!appFiles.some((file) => /(^|[\\/])(node_modules|tests|\.local|\.runtime|\.git)([\\/]|$)|local\.json|\.sqlite|\.log$/.test(file)));
   }
   await writeFile(join(artifacts, "result.json"), JSON.stringify({ packaged, versions, nodeOnPath: false, source: result.source,
-    initiallyPaused: result.paused, gui, tasksQueue, runsRecovery, singleInstance: true, controlledRestarts: 3, refreshDuringNavigation: true, isolatedLifecycleBridge: true,
+    initiallyPaused: result.paused, gui, tasksQueue, runsRecovery, tray, singleInstance: true, controlledRestarts: 3, refreshDuringNavigation: true, isolatedLifecycleBridge: true,
     scriptErrors: pageDebugger.errors.length, gracefulExit: true }, null, 2));
   console.log(JSON.stringify({ passed: true, packaged, versions, artifacts }));
 } catch (error) {

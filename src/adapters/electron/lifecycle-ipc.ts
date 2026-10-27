@@ -4,7 +4,7 @@ import { AppError } from "../../shared/errors.js";
 
 /** Only the registered local control window's top frame can use this fixed protocol. */
 export function registerLifecycleControl(window: BrowserWindow, pageUrl: string, callbacks: {
-  view(): LifecycleView; command(command: LifecycleCommand): Promise<void>; failed(error: unknown): void;
+  view(): LifecycleView; command(command: LifecycleCommand): Promise<void>; failed(error: unknown): void; openNotice(id: string): Promise<void>;
 }): void {
   const validate = (event: IpcMainInvokeEvent) => {
     if (window.isDestroyed() || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame
@@ -17,7 +17,13 @@ export function registerLifecycleControl(window: BrowserWindow, pageUrl: string,
     try { await callbacks.command(value as LifecycleCommand); }
     catch (error) { callbacks.failed(error); throw error; }
   });
+  ipcMain.handle("desktop-notices:open", async (event, id: unknown) => {
+    validate(event);
+    if (typeof id !== "string" || !/^[a-f0-9-]{36}$/.test(id)) throw new AppError("INVALID_ARGUMENT", "通知标识无效。");
+    await callbacks.openNotice(id);
+  });
   window.once("closed", () => {
     ipcMain.removeHandler("desktop-lifecycle:read"); ipcMain.removeHandler("desktop-lifecycle:command");
+    ipcMain.removeHandler("desktop-notices:open");
   });
 }

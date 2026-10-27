@@ -4,6 +4,7 @@ import type { LifecycleCommand, LifecycleView } from "../domain/lifecycle.js" wi
 contextBridge.exposeInMainWorld("desktopLifecycle", Object.freeze({
   read: (): Promise<LifecycleView> => ipcRenderer.invoke("desktop-lifecycle:read"),
   command: (command: LifecycleCommand): Promise<void> => ipcRenderer.invoke("desktop-lifecycle:command", command),
+  openNotice: (id: string): Promise<void> => ipcRenderer.invoke("desktop-notices:open", id),
   onChange: (listener: (view: LifecycleView) => void) => {
     const receive = (_event: Electron.IpcRendererEvent, view: LifecycleView) => listener(view);
     ipcRenderer.on("desktop-lifecycle:changed", receive);

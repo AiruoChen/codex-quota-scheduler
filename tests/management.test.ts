@@ -90,6 +90,27 @@ test("GUI 仅提供白名单浏览器模块，不能读取服务端模块或源�
   } finally { await env.cleanup(); }
 });
 
+test("脱敏诊断只经管理会话导出白名单状态，不包含账户、配置路径或任务正文", async () => {
+  const env = await setup("codex");
+  try {
+    const save = await env.action("task-save", { definition: { id: "private-id", name: "PRIVATE_TASK_NAME", enabled: true,
+      projectDir: env.dir, priority: 1, session: { mode: "new" } }, prompt: "PRIVATE_PROMPT_CONTENT" });
+    assert.equal(save.status, 200);
+    const denied = await fetch(env.server.url + "/api/diagnostics");
+    assert.equal(denied.status, 403);
+    const report = await env.get("/api/diagnostics");
+    assert.equal(report.format, 1);
+    assert.deepEqual(Object.keys(report), ["format", "createdAt", "environment", "provider", "service", "quota", "scheduler", "recovery"]);
+    assert.equal(report.provider, "codex");
+    assert.equal((report.scheduler as { paused: boolean }).paused, true);
+    const exported = JSON.stringify(report);
+    for (const secret of [env.dir, env.configPath, env.trace, "PRIVATE_TASK_NAME", "PRIVATE_PROMPT_CONTENT", "private-id",
+      "test-secret", "fixture@example.test", "executable", "databasePath", "promptSnapshot", "runtime.log"]) {
+      assert.equal(exported.includes(secret), false, `诊断泄露 ${secret}`);
+    }
+  } finally { await env.cleanup(); }
+});
+
 test("同一时刻的两个手动请求只登记一个后台操作", async () => {
   const env = await setup("codex", "hang");
   try {

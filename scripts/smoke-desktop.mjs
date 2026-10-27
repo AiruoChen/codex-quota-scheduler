@@ -73,16 +73,18 @@ try {
   const gui = await guiAcceptance(pageDebugger, artifacts);
   checkpoint = "tasks-and-queue";
   const tasksQueue = await tasksQueueAcceptance(pageDebugger);
+  const controlPage = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find((target) => target.url.endsWith("/startup.html"));
+  assert.ok(controlPage, "Lifecycle control page exists");
+  controlDebugger = await desktopDebugger(controlPage.webSocketDebuggerUrl);
+  await controlDebugger.wait("typeof window.desktopLifecycle !== 'undefined'");
+  await controlDebugger.evaluate("window.desktopLifecycle.command('show')");
+  await wait("document.visibilityState === 'visible' && document.hasFocus()");
   checkpoint = "runs-and-recovery";
   const runsRecovery = await runsRecoveryAcceptance(pageDebugger, artifacts);
   const image = await call("Page.captureScreenshot", { format: "png" });
   await writeFile(join(artifacts, "overview.png"), Buffer.from(image.data, "base64"));
   const record = await readInstance(configPath);
   assert.ok(record && record.pid !== child.pid);
-  const controlPage = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find((target) => target.url.endsWith("/startup.html"));
-  assert.ok(controlPage, "Lifecycle control page exists");
-  controlDebugger = await desktopDebugger(controlPage.webSocketDebuggerUrl);
-  await controlDebugger.wait("typeof window.desktopLifecycle !== 'undefined'");
   assert.equal(await evaluate("typeof window.desktopLifecycle"), "undefined");
   assert.equal(await controlDebugger.evaluate("typeof require"), "undefined");
   await controlDebugger.evaluate("window.desktopLifecycle.command('restart')");
@@ -136,7 +138,13 @@ try {
     scriptErrors: pageDebugger.errors.length, gracefulExit: true }, null, 2));
   console.log(JSON.stringify({ passed: true, packaged, versions, artifacts }));
 } catch (error) {
-  await desktopDiagnostics(artifacts, { checkpoint, error, page: pageDebugger, control: controlDebugger }).catch(() => {});
+  const diagnostic = await desktopDiagnostics(artifacts, { checkpoint, error, page: pageDebugger, control: controlDebugger }).catch(() => null);
+  const message = error instanceof Error ? error.message : "";
+  const reason = message.startsWith("Desktop UI did not become ready:") ? "UI_NOT_READY"
+    : message.startsWith("Desktop debugger timeout:") ? "DEBUGGER_TIMEOUT" : error?.code === "ERR_ASSERTION" ? "ASSERTION_FAILED" : "SMOKE_CHECK_FAILED";
+  console.log(JSON.stringify({ smokeFailure: { checkpoint, reason,
+    visibility: diagnostic?.management?.visibility === "visible" ? "visible" : diagnostic?.management?.visibility === "hidden" ? "hidden" : "unknown",
+    focused: diagnostic?.management?.focused === true } }));
   throw error;
 } finally {
   pageDebugger?.close();

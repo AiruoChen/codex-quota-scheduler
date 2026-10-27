@@ -113,6 +113,7 @@ export async function serveManagement(service: ManagementService, options: Serve
             origin: target.origin ? { account: maskAccount(target.origin.account.email), cliVersion: target.origin.cliVersion } : null });
         }
         if (path === "/api/config") return reply(response, 200, { active: service.config, saved: await new ConfigManager(service.configPath).show() });
+        if (path === "/api/diagnostics") return reply(response, 200, await service.diagnostics());
         if (path === "/api/logs") return reply(response, 200, { text: options.logger.tail() });
       }
       if (request.method === "POST" && path === "/api/action") {

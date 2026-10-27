@@ -36,6 +36,13 @@ Windows PowerShell 若限制执行 npm.ps1，请使用上面的 npm.cmd；其他
 运行记录支持服务端筛选分页、输出/快照复制和保留阅读位置；异常页提供检查建议、准确回合核对及显式处理。见 [运行记录与异常处理](docs/DESKTOP-RUNS-RECOVERY.md)。
 关闭窗口默认留在托盘，后台继续运行；托盘支持打开、状态、暂停派发和安全退出。通知提供脱敏文案、持久化去重、偏好和本地记录。见 [托盘与通知](docs/DESKTOP-TRAY-NOTIFICATIONS.md)。
 已提供 Windows 当前用户安装包：`npm.cmd run package:installer`。数据管理支持一致性备份、旧数据导入为新副本、配置切换和升级准备；卸载保留用户数据。见 [安装与数据迁移](docs/DESKTOP-INSTALL-MIGRATION.md)。
+客户端的设置页提供离线使用说明和脱敏诊断 JSON 导出；后台无法启动时，状态页仍可查看帮助。
+
+## 验收与发布
+
+Windows x64 上可运行 `npm.cmd run acceptance -- --output-name candidate-001 --soak-seconds 60`，统一执行检查、测试、演示、便携与安装器打包、桌面/生命周期/安装迁移验收、隐私检查和协议替身稳定性烟测。干净源码提交通过后，输出 `.release/candidate-001/bundle/`，其中包含安装包、SHA256、版本说明及脱敏验收报告。`npm.cmd run verify:release -- --directory .release/candidate-001/bundle --channel candidate` 会重新核对文件和门禁；已用过的输出名不可覆盖。
+
+CI 只对默认分支的成功 push 上传候选产物。受控的手动工作流可把核验后的产物发布为 GitHub 候选版。**稳定版仍要求真实账户、独立 Windows 环境、原生通知/缩放/故障人工验收、签名安装器及连续 24 小时实测；短时模拟报告不能替代这些证据。** 完整步骤、证据格式与失败处理见 [桌面客户端验收与发布](docs/DESKTOP-ACCEPTANCE-RELEASE.md)，本版变更见 [0.3.0 版本说明](docs/RELEASE-NOTES-0.3.0.md)。
 
 ```powershell
 npm.cmd run ui
@@ -222,14 +229,14 @@ docs/              需求、架构和分阶段开发路线
 ```
 
 业务后端没有第三方 npm 运行依赖；桌面便携包包含 Electron 运行时，开发依赖通过 `package-lock.json` 固定。
-持续集成会在 Windows 和 Linux 的 Node.js 22 环境运行类型检查、测试和模拟演示。
+持续集成会在 Windows 和 Linux 的 Node.js 22 环境运行类型检查、测试和模拟演示；Windows 作业另跑统一桌面验收。
 `npm run check` 同时检查浏览器/工具 JavaScript 语法，以及领域层和调度器的依赖边界。
 便携包按当前源码清单复制编译结果，排除遗留编译文件及输出目录中的额外文件。
 代码审查范围、修复和验证边界见 [代码审查记录](docs/CODE-REVIEW.md)。
 
 ## 开发顺序
 
-托盘、通知、安装包与数据迁移已完成；后续推进设置帮助增强及发布验收，具体任务见 [开发路线](docs/ROADMAP.md)。
+托盘、通知、安装包与数据迁移、设置帮助和候选版验收发布模块已实现；正式签名、独立机器和真实账户验收仍须按 [开发路线](docs/ROADMAP.md) 补足证据。
 桌面客户端的页面设计、安装部署、数据迁移与分块验收草案见 [桌面客户端需求](docs/DESKTOP-CLIENT-REQUIREMENTS.md)；桌面外壳、便携目录、托盘、通知及安装迁移已实现，正式签名与干净系统验收待完成。
 整体职责与数据流见 [架构说明](docs/ARCHITECTURE.md)，产品边界见 [需求清单](docs/REQUIREMENTS.md)。
 

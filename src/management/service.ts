@@ -103,6 +103,31 @@ export class ManagementService {
     return (await this.app.tasks()).map(({ promptSnapshot: _prompt, ...task }) => task);
   }
 
+  /** A deliberately small allowlist for user-exported diagnostics. Never serialize state, config or logs here. */
+  async diagnostics() {
+    const monitor = (await this.app.monitoring()).repository.status();
+    const scheduler = (await this.app.scheduling()).repository.status();
+    const recovery = (await this.recovery()).repository.report();
+    await this.app.storage();
+    const count = (status: string) => scheduler.queue.filter((item) => item.status === status).length;
+    const lastSample = monitor ? Date.parse(monitor.observedAt) : Number.NaN;
+    const ageSeconds = Number.isFinite(lastSample) ? Math.round((this.clock.now().getTime() - lastSample) / 1000) : null;
+    return {
+      format: 1,
+      createdAt: this.clock.now().toISOString(),
+      environment: { platform: process.platform, arch: process.arch, nodeMajor: Number(process.versions.node.split(".")[0]) },
+      provider: this.config.provider,
+      service: { closing: this.closing, loop: this.loop?.job.state === "running" ? this.loop.job.kind : null,
+        activeOperations: this.activity().activeOperations },
+      quota: { status: monitor?.availability.status ?? "unknown", failures: monitor?.failures ?? 0, ageSeconds },
+      scheduler: { paused: scheduler.paused, workerRecorded: scheduler.worker !== null,
+        queue: { queued: count("queued"), waitingQuota: count("waiting_quota"), running: count("running"),
+          succeeded: count("succeeded"), failed: count("failed"), cancelled: count("cancelled"),
+          needsAttention: count("needs_attention") } },
+      recovery: { issues: recovery.issues.length, owners: recovery.owners.length },
+    };
+  }
+
   async saveTask(input: unknown) {
     this.ensureOpen();
     const data = requireRecord(input, "任务");

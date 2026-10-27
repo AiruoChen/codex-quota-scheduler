@@ -62,10 +62,16 @@
       <article class="panel"><div class="panel-heading"><h2>待人工核对</h2><a href="#runs" class="text-link">全部运行记录 ↗</a></div><div id="attention"></div><div class="pagination"><span id="attention-count-label" class="subtle"></span><button id="attention-prev">上一页</button><button id="attention-next">下一页</button></div><p class="hint">审批或补充输入请求不会自动同意。确认已核对仅解除调度阻塞，记录仍保留待处理状态。</p></article><article class="panel"><h2>本次后台会话的核对结果</h2><div id="recovery-results"></div></article>
     </section>
     <section id="settings" class="view" hidden>
-      <article class="panel"><h2>使用帮助</h2><p class="description">保存任务后显式加入队列；启动调度进程后仍需恢复派发。结果不明时，先在“异常与恢复”核对原会话，切勿重复发送。</p><p class="hint">桌面客户端关闭窗口后留在托盘，当前任务继续；托盘菜单可查看通知、暂停派发或安全退出。通知可在服务状态窗口关闭；桌面菜单“安装与数据迁移”可显式备份、导入副本、切换配置及准备升级。</p></article>
+      <article class="panel" aria-labelledby="local-help-title"><h2 id="local-help-title">本地使用说明</h2><p class="description">此说明随客户端安装，离线可读。首次启动与重启后队列均暂停；只有显式恢复后才会派发。</p>
+        <details><summary>首次配置与模拟体验</summary><p>桌面窗口选择“启动 / 重试连接”，进入概览核对来源。首次启动可先用模拟额度体验界面；模拟模式不能执行真实任务。接入真实 Codex 前，安装并登录本机 CLI，在此页设置 provider、codex.executable、codex.home 等配置，保存后从桌面状态窗口受控重启。CLI 缺失、未登录或额度未知时先修复连接并重新完整查询。</p></details>
+        <details><summary>保存任务、入队与暂停</summary><p>在“任务管理”编辑并保存任务，核对目录、权限和指令，再按“加入队列”确认不可变快照。进入“调度队列”，显式启动进程并点击“恢复派发”；只有完整查询确认账户与额度可用后才会领取。点击“暂停派发”只阻止领取下一项，当前任务继续完成；停止进程会请求停止并等待结果保存。</p></details>
+        <details><summary>取消、结果不明与恢复</summary><p>在运行详情请求取消后，必须等待准确回合终止通知。若显示待核对，请进入“异常与恢复”，先检查本机执行权，再只读核对记录中的原账户、会话与回合，确认结果后显式处理。请勿重新提交、猜测最新回合、自动批准审批或补充输入；重启不会自动恢复派发。</p></details>
+        <details><summary>备份、升级与卸载</summary><p>在桌面状态窗口“安装与数据迁移”中先停止自有后台并等待落盘，再创建完整备份；导入旧数据先预检，再明确确认副本及目标，不覆盖旧项目。升级前使用“备份并安全退出”，然后运行新安装包。卸载默认保留用户数据、项目和 Codex 登录目录；删除数据需要另行人工处理。</p></details>
+      </article>
       <div class="section-heading"><div><h2>运行配置</h2><p>保存时校验并备份；重启本地服务后生效。</p></div><span id="config-difference" class="badge"></span></div>
       <article class="panel"><form id="config-form"><div class="config-editor"><label>配置项<select id="config-key"><option>provider</option><option>pollIntervalMs</option><option>quotaMaxAgeMs</option><option>reservePercent</option><option>limitId</option><option>scheduler.trigger</option><option>tasksFile</option><option>storage.databasePath</option><option>codex.executable</option><option>codex.args</option><option>codex.home</option><option>codex.requestTimeoutMs</option><option>codex.shutdownTimeoutMs</option></select></label><label>值（JSON 或字符串）<input id="config-value" required autocomplete="off"></label><button type="submit" class="primary">保存配置</button></div><p class="hint">provider=mock 为模拟额度，不能提交真实任务。修改前请停止调度并等待执行或核对完成。</p></form><details><summary>查看正在生效的配置</summary><pre id="active-config"></pre></details></article>
       <article class="panel"><div class="panel-heading"><h2>运行日志</h2><button id="refresh-logs">刷新日志</button></div><p class="hint">日志自动轮转，仅记录事件与错误代码。任务输出保存在运行详情中。</p><pre id="runtime-logs" class="log-output"></pre></article>
+      <article class="panel"><div class="panel-heading"><h2>脱敏诊断</h2><button id="export-diagnostics" type="button">导出诊断 JSON</button></div><p class="hint">仅包含运行环境、连接与队列状态计数；不包含账户、任务名称、指令、输出、日志正文、密钥或完整路径。导出后可先检查文件，再选择是否分享。</p></article>
     </section>
     <footer>Codex Quota Scheduler<span id="footer-status">正在连接本地服务</span></footer>
   </main>

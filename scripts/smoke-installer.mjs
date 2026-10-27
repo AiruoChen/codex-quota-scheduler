@@ -95,6 +95,8 @@ try {
   assert.equal(await hash(executable), appHash);
   checkpoint = "migration-native-picker";
   await control.evaluate("window.desktopData.action('stop',undefined,true)");
+  await control.evaluate("window.desktopLifecycle.command('status')");
+  await control.wait("document.visibilityState==='visible' && document.hasFocus()");
   await control.evaluate("window.desktopData.action('preview').catch(()=>{});true");
   await pickConfig(child.pid, originalConfig);
   await control.wait("window.desktopData.read().then(v=>v.preview?.tasks===1 && v.preview.runs===1)");

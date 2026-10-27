@@ -7,7 +7,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { root } from "./lib/runtime-files.mjs";
 import { readInstance } from "../dist/src/runtime/instance.js";
 import { desktopDebugger } from "./lib/desktop-debugger.mjs";
-import { desktopDiagnostics } from "./lib/desktop-diagnostics.mjs";
+import { desktopDiagnostics, smokeFailureSummary } from "./lib/desktop-diagnostics.mjs";
 import { guiAcceptance } from "./lib/gui-acceptance.mjs";
 import { tasksQueueAcceptance } from "./lib/tasks-queue-acceptance.mjs";
 import { runsRecoveryAcceptance } from "./lib/runs-recovery-acceptance.mjs";
@@ -70,7 +70,7 @@ try {
   })()`);
   assert.equal(result.paused, true); assert.equal(result.source, "mock"); assert.ok(result.runId);
   checkpoint = "gui-framework";
-  const gui = await guiAcceptance(pageDebugger, artifacts);
+  const gui = await guiAcceptance(pageDebugger, artifacts, (step) => { checkpoint = step; });
   checkpoint = "tasks-and-queue";
   const tasksQueue = await tasksQueueAcceptance(pageDebugger);
   const controlPage = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find((target) => target.url.endsWith("/startup.html"));
@@ -139,12 +139,7 @@ try {
   console.log(JSON.stringify({ passed: true, packaged, versions, artifacts }));
 } catch (error) {
   const diagnostic = await desktopDiagnostics(artifacts, { checkpoint, error, page: pageDebugger, control: controlDebugger }).catch(() => null);
-  const message = error instanceof Error ? error.message : "";
-  const reason = message.startsWith("Desktop UI did not become ready:") ? "UI_NOT_READY"
-    : message.startsWith("Desktop debugger timeout:") ? "DEBUGGER_TIMEOUT" : error?.code === "ERR_ASSERTION" ? "ASSERTION_FAILED" : "SMOKE_CHECK_FAILED";
-  console.log(JSON.stringify({ smokeFailure: { checkpoint, reason,
-    visibility: diagnostic?.management?.visibility === "visible" ? "visible" : diagnostic?.management?.visibility === "hidden" ? "hidden" : "unknown",
-    focused: diagnostic?.management?.focused === true } }));
+  console.log(JSON.stringify({ smokeFailure: smokeFailureSummary(checkpoint, error, diagnostic) }));
   throw error;
 } finally {
   pageDebugger?.close();

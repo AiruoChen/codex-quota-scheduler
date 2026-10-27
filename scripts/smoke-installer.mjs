@@ -6,11 +6,14 @@ import { join, resolve, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { root } from "./lib/runtime-files.mjs";
 import { desktopDebugger } from "./lib/desktop-debugger.mjs";
-import { desktopDiagnostics } from "./lib/desktop-diagnostics.mjs";
+import { desktopDiagnostics, smokeFailureSummary } from "./lib/desktop-diagnostics.mjs";
 import { pickConfig } from "./lib/pick-config.mjs";
 import { initializeDesktopProfile } from "../dist/src/desktop/profile.js";
 import { loadConfig } from "../dist/src/config/load.js";
 import { SqliteStore } from "../dist/src/storage/sqlite-store.js";
+
+let checkpoint = "installer-build";
+function mark(step) { checkpoint = step; console.log(JSON.stringify({ smokeCheckpoint: step })); }
 
 if (process.platform !== "win32") throw new Error("Installer acceptance requires Windows");
 const args = process.argv.slice(2);
@@ -19,6 +22,7 @@ const input = resolve(args[1]), id = randomUUID(), outputName = `installer-accep
 await mkdir(join(root, ".local"), { recursive: true });
 const artifacts = join(root, ".local", outputName);
 await mkdir(artifacts);
+mark("installer-build");
 execFileSync(process.execPath, [join(root, "scripts/package-installer.mjs"), "--package", input, "--output-name", outputName, "--test-id", id], { windowsHide: true, stdio: "inherit" });
 const manifest = JSON.parse(await readFile(join(root, ".release", outputName, "release.json"), "utf8"));
 const setup = join(root, ".release", outputName, manifest.file), destination = join(artifacts, "安装目录 中文", "CodexQuotaScheduler");
@@ -32,10 +36,13 @@ function native(executable, args) {
 await mkdir(destination, { recursive: true });
 const sentinel = join(destination, "foreign-file.txt");
 await writeFile(sentinel, "Synthetic unrelated file");
+mark("installer-refuse-foreign-directory");
 assert.equal(native(setup, ["/S"]), 43, "Refuse an unrelated nonempty directory");
 assert.equal(await readFile(sentinel, "utf8"), "Synthetic unrelated file");
 await unlink(sentinel);
+mark("installer-fresh-install");
 assert.equal(native(setup, ["/S"]), 0, "Fresh per-user install");
+mark("installer-verify-payload");
 for (const [path, expected] of Object.entries(manifest.files)) assert.equal(await hash(join(destination, path)), expected);
 const ready = join(artifacts, "mutex-ready"), release = join(artifacts, "mutex-release");
 const holdScript = `$ErrorActionPreference='Stop';$mutex=New-Object System.Threading.Mutex($false,'Local\\CodexQuotaScheduler.Maintenance.v1');try {[System.IO.File]::WriteAllText($env:CQS_MUTEX_READY,'ready');for($i=0;$i -lt 100;$i++){if(Test-Path -LiteralPath $env:CQS_MUTEX_RELEASE){break};Start-Sleep -Milliseconds 100}}finally{$mutex.Dispose()}`;
@@ -43,12 +50,15 @@ const holder = spawn(join(process.env.SystemRoot ?? "C:/Windows", "System32/Wind
   ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", Buffer.from(holdScript, "utf16le").toString("base64")],
   { windowsHide: true, stdio: "ignore", env: { ...process.env, CQS_MUTEX_READY: ready, CQS_MUTEX_RELEASE: release } });
 const released = new Promise((done) => holder.once("exit", done));
+mark("installer-maintenance-held");
 try {
   for (let i = 0; i < 100; i++) { try { await stat(ready); break; } catch { await delay(100); } }
   assert.ok(await stat(ready));
   assert.equal(native(join(destination, "maintenance-guard.exe"), []), 42, "Maintenance probe blocks startup");
 } finally { await writeFile(release, "release"); await released; }
+mark("installer-maintenance-released");
 assert.equal(native(join(destination, "maintenance-guard.exe"), []), 0, "Maintenance probe clears after installer exits");
+mark("installer-source-fixture");
 const originalConfig = join(artifacts, "source 中文/config/local.json"), sourceDir = join(artifacts, "source 中文");
 await initializeDesktopProfile({ dataDir: sourceDir, configPath: originalConfig, debugging: false });
 const sourceConfig = await loadConfig(originalConfig), sourceStore = new SqliteStore(sourceConfig.storage.databasePath);
@@ -63,7 +73,8 @@ const env = { ...process.env };
 for (const key of Object.keys(env)) if (/^(PATH|NODE_OPTIONS|NODE_PATH|ELECTRON_RUN_AS_NODE)$/i.test(key)) delete env[key];
 env.PATH = artifacts;
 const child = spawn(executable, ["--data-dir", profile, "--remote-debugging-port=0"], { env, windowsHide: true, stdio: ["ignore", "ignore", "pipe"] });
-let stderr = "", page, control, checkpoint = "installed-launch";
+let stderr = "", page, control;
+mark("installed-launch");
 child.stderr.on("data", (chunk) => { stderr = (stderr + chunk).slice(-4000); });
 const exited = new Promise((done) => child.once("exit", done));
 try {
@@ -88,50 +99,63 @@ try {
   assert.equal(await control.evaluate("document.getElementById('data-open-directory')?.textContent"), "打开用户数据目录");
   assert.equal(await control.evaluate("typeof require"), "undefined");
   const appHash = await hash(executable);
-  checkpoint = "running-upgrade-refused";
+  mark("running-upgrade-refused");
   assert.equal(native(setup, ["/S"]), 42);
+  mark("running-uninstall-refused");
   assert.ok([0, 42].includes(native(join(destination, "Uninstall.exe"), ["/S"])));
   await delay(1000); // The uninstaller may copy itself before returning; verify its actual protected state.
   assert.ok(await stat(join(destination, "install-product.ini")));
   assert.equal(child.exitCode, null);
   assert.equal(await hash(executable), appHash);
-  checkpoint = "migration-native-picker";
+  mark("migration-stop-backend");
   await control.evaluate("window.desktopData.action('stop',undefined,true)");
+  mark("migration-show-control");
   await control.evaluate("window.desktopLifecycle.command('status')");
   await control.wait("document.visibilityState==='visible' && document.hasFocus()");
+  mark("migration-native-picker");
   await control.evaluate("window.desktopData.action('preview').catch(()=>{});true");
   await pickConfig(child.pid, originalConfig);
+  mark("migration-preview-ready");
   await control.wait("window.desktopData.read().then(v=>v.preview?.tasks===1 && v.preview.runs===1)");
   await control.evaluate("document.getElementById('data-confirm').click();true");
   await control.wait("!document.getElementById('data-commit').disabled");
+  mark("migration-commit");
   await control.evaluate("document.getElementById('data-commit').click();true");
   await control.wait("window.desktopData.read().then(v=>!v.busy && !v.preview && v.profiles.length===2)");
   assert.equal(await control.evaluate("window.desktopLifecycle.read().then(v=>v.phase)"), "stopped");
   assert.equal(await hash(sourceConfig.storage.databasePath), sourceHash);
   const imported = await control.evaluate("window.desktopData.read().then(v=>v.config)");
+  mark("migration-start-imported");
   await control.evaluate("window.desktopLifecycle.command('start')");
   const importedUrl = await control.evaluate("window.desktopLifecycle.read().then(v=>v.connection.url)");
   await page.wait(`location.origin===${JSON.stringify(importedUrl)} && document.getElementById('source')?.textContent.includes('MOCK')`);
+  mark("migration-verify-imported");
   await page.wait("fetch('/api/run?id=" + sourceRun.id + "').then(r=>r.json()).then(s=>s.run?.id==='" + sourceRun.id + "')");
   assert.equal(await page.evaluate("fetch('/api/tasks').then(r=>r.json()).then(tasks=>tasks.some(t=>t.id==='original-desktop'))"), false);
   assert.equal(await control.evaluate("window.desktopLifecycle.read().then(v=>v.activity.paused)"), true);
+  mark("migration-create-backup");
   await control.evaluate("window.desktopLifecycle.command('status')");
   await control.evaluate("document.getElementById('data-management').scrollIntoView()");
   const screenshot = await control.call("Page.captureScreenshot", { format: "png" });
   await writeFile(join(artifacts, "migration.png"), Buffer.from(screenshot.data, "base64"));
-  checkpoint = "profile-switch-and-upgrade-preparation";
+  mark("profile-stop-imported");
   await control.evaluate("window.desktopData.action('stop',undefined,true)");
+  mark("profile-switch-default");
   await control.evaluate("window.desktopData.action('switch','default',true)");
+  mark("profile-start-default");
   await control.evaluate("window.desktopLifecycle.command('start')");
   const originalUrl = await control.evaluate("window.desktopLifecycle.read().then(v=>v.connection.url)");
   await page.wait(`location.origin===${JSON.stringify(originalUrl)} && document.getElementById('source')?.textContent.includes('MOCK')`);
+  mark("profile-verify-default");
   assert.equal(await page.evaluate("fetch('/api/tasks').then(r=>r.json()).then(tasks=>tasks.some(t=>t.id==='original-desktop'))"), true);
+  mark("upgrade-prepare-exit");
   await control.evaluate("void window.desktopData.action('prepare-upgrade',undefined,true).catch(()=>{});true");
   assert.equal(await Promise.race([exited, delay(20000).then(() => { throw new Error("Upgrade preparation timeout"); })]), 0);
+  mark("upgrade-verify-backups");
   const dataPaths = [join(profile, "config/local.json"), join(profile, "data/state.sqlite"), imported, (await loadConfig(imported)).storage.databasePath];
   const before = await Promise.all(dataPaths.map(hash));
   assert.ok((await readdir(join(profile, "backups"))).some((name) => name.startsWith("manual-")));
-  checkpoint = "upgrade-and-uninstall-preserve-data";
+  mark("installer-downgrade-refused");
   const reg = join(process.env.SystemRoot ?? "C:/Windows", "System32/reg.exe"), key = `HKCU\\Software\\${manifest.product}`;
   execFileSync(reg, ["ADD", key, "/v", "Version", "/t", "REG_SZ", "/d", "9.0.0", "/f", "/reg:64"], { windowsHide: true, stdio: "ignore" });
   assert.equal(native(setup, ["/S"]), 44, "Downgrade refused");
@@ -143,7 +167,9 @@ try {
   await rename(resources, saved);
   try {
     await symlink(outside, resources, "junction");
+    mark("installer-redirected-install-refused");
     assert.equal(native(setup, ["/S"]), 43, "Installation refuses a redirected program path");
+    mark("installer-redirected-uninstall-refused");
     assert.ok([0, 43].includes(native(join(destination, "Uninstall.exe"), ["/S"])));
     await delay(1000); assert.ok(await stat(executable));
     assert.equal(await readFile(join(outside, "auth.json"), "utf8"), "Synthetic external file");
@@ -151,10 +177,13 @@ try {
     if ((await lstat(resources)).isSymbolicLink() && (await realpath(resources)).toLowerCase() === resolve(outside).toLowerCase()) await rmdir(resources);
     await rename(saved, resources);
   }
+  mark("installer-upgrade-preserves-data");
   assert.equal(native(setup, ["/S"]), 0, "Manual reinstall/upgrade");
   assert.deepEqual(await Promise.all(dataPaths.map(hash)), before);
   await writeFile(join(destination, "user-file-to-keep.txt"), "Synthetic unknown file");
+  mark("installer-uninstall-preserves-data");
   assert.equal(native(join(destination, "Uninstall.exe"), ["/S"]), 0);
+  mark("installer-verify-uninstall");
   for (let i = 0; i < 100; i++) { try { await stat(executable); await delay(100); } catch (error) { if (error.code === "ENOENT") break; throw error; } }
   await assert.rejects(stat(executable), { code: "ENOENT" });
   assert.equal(await readFile(join(destination, "user-file-to-keep.txt"), "utf8"), "Synthetic unknown file");
@@ -166,7 +195,9 @@ try {
     manualUpgradePreservesData: true, downgradeBlocked: true, redirectedPathsBlocked: true, uninstallPreservesData: true, unknownFilesPreserved: true, realTasksSubmitted: false, scriptErrors: 0 }, null, 2));
   console.log(JSON.stringify({ passed: true, artifacts }));
 } catch (error) {
-  await desktopDiagnostics(artifacts, { checkpoint, error, page, control }).catch(() => {}); throw error;
+  const diagnostic = await desktopDiagnostics(artifacts, { checkpoint, error, page, control }).catch(() => null);
+  console.log(JSON.stringify({ smokeFailure: smokeFailureSummary(checkpoint, error, diagnostic) }));
+  throw error;
 } finally {
   page?.close(); control?.close();
   if (child.exitCode === null) { child.kill(); await Promise.race([exited, delay(5000)]); }

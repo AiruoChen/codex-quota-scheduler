@@ -54,16 +54,28 @@ export async function runAcceptanceCommand(id, command, args, logPath, { timeout
   const lines = tail.trim().split(/\r?\n/), newestFirst = [...lines].reverse();
   if (code !== 0 || timedOut || exceeded) {
     const error = new Error(`ACCEPTANCE_${id.toUpperCase()}_FAILED`);
-    const line = id === "desktop" ? newestFirst.find((item) => item.startsWith('{"smokeFailure":')) : null;
+    const line = ["desktop", "installer"].includes(id) ? newestFirst.find((item) => item.startsWith('{"smokeFailure":')) : null;
     if (line) {
       try {
         const value = JSON.parse(line).smokeFailure;
         if (/^[A-Za-z0-9_-]{1,64}$/.test(value?.checkpoint)
-          && ["UI_NOT_READY", "DEBUGGER_TIMEOUT", "ASSERTION_FAILED", "SMOKE_CHECK_FAILED"].includes(value.reason)
+          && ["UI_NOT_READY", "DEBUGGER_TIMEOUT", "ASSERTION_FAILED", "NATIVE_PICKER_FAILED", "SMOKE_CHECK_FAILED"].includes(value.reason)
           && ["visible", "hidden", "unknown"].includes(value.visibility) && typeof value.focused === "boolean") {
           error.smokeFailure = { checkpoint: value.checkpoint, reason: value.reason, visibility: value.visibility, focused: value.focused };
+          for (const key of ["actual", "expected"]) {
+            if (typeof value[key] === "boolean" || typeof value[key] === "number" && Number.isFinite(value[key])) error.smokeFailure[key] = value[key];
+          }
         }
       } catch { /* Keep the fixed error code when diagnostic text is malformed. */ }
+    }
+    if (!error.smokeFailure && id === "installer") {
+      const checkpoint = newestFirst.find((item) => item.startsWith('{"smokeCheckpoint":'));
+      if (checkpoint) {
+        try {
+          const value = JSON.parse(checkpoint).smokeCheckpoint;
+          if (/^[A-Za-z0-9_-]{1,64}$/.test(value)) error.smokeFailure = { checkpoint: value, reason: "SMOKE_CHECK_FAILED", visibility: "unknown", focused: false };
+        } catch { /* Initial build/install failures still expose only a fixed checkpoint. */ }
+      }
     }
     throw error;
   }

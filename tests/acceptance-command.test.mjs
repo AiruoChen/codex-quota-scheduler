@@ -5,6 +5,7 @@ import test from "node:test";
 import { readHarnessResult } from "../scripts/lib/acceptance-artifacts.mjs";
 import { runAcceptanceCommand } from "../scripts/lib/acceptance-command.mjs";
 import { root } from "../scripts/lib/runtime-files.mjs";
+import { smokeFailureSummary } from "../scripts/lib/desktop-diagnostics.mjs";
 
 async function localFixture(t, prefix) {
   const local = join(root, ".local");
@@ -42,15 +43,29 @@ test("超时先向当前步骤发送合作停止信号并拒绝其结果", async
   await assert.rejects(readFile(log + ".stop"), { code: "ENOENT" });
 });
 
-test("桌面失败诊断只接纳并重建固定字段", async (t) => {
+test("桌面与安装失败诊断只接纳固定字段和安全标量", async (t) => {
   const directory = await localFixture(t, "acceptance-command-");
-  const diagnostic = { checkpoint: "gui_ready", reason: "UI_NOT_READY", visibility: "visible", focused: false,
+  const diagnostic = { checkpoint: "gui_ready", reason: "UI_NOT_READY", visibility: "visible", focused: false, actual: "private-output", expected: true,
     prompt: "private-task-content" };
   const script = `console.log(JSON.stringify({smokeFailure:${JSON.stringify(diagnostic)}}));process.exit(1)`;
-  await assert.rejects(runAcceptanceCommand("desktop", process.execPath, ["-e", script], join(directory, "desktop.log")), (error) => {
-    assert.deepEqual(error.smokeFailure, { checkpoint: "gui_ready", reason: "UI_NOT_READY", visibility: "visible", focused: false });
-    assert.equal(JSON.stringify(error.smokeFailure).includes("private-task-content"), false);
-    return true;
+  for (const id of ["desktop", "installer"]) {
+    await assert.rejects(runAcceptanceCommand(id, process.execPath, ["-e", script], join(directory, id + ".log")), (error) => {
+      assert.deepEqual(error.smokeFailure, { checkpoint: "gui_ready", reason: "UI_NOT_READY", visibility: "visible", focused: false, expected: true });
+      assert.equal(JSON.stringify(error.smokeFailure).includes("private"), false);
+      return true;
+    });
+  }
+});
+
+test("安装早期失败保留检查点，公开摘要不携带错误原文或字符串断言", async (t) => {
+  const directory = await localFixture(t, "acceptance-command-");
+  const privateError = Object.assign(new Error("PRIVATE path and prompt"), { code: "ERR_ASSERTION", actual: "PRIVATE", expected: 42 });
+  assert.deepEqual(smokeFailureSummary("installer-fresh-install", privateError), {
+    checkpoint: "installer-fresh-install", reason: "ASSERTION_FAILED", visibility: "unknown", focused: false, expected: 42 });
+  const script = 'console.log(JSON.stringify({smokeCheckpoint:"installer-fresh-install"}));console.error("PRIVATE raw error");process.exit(1)';
+  await assert.rejects(runAcceptanceCommand("installer", process.execPath, ["-e", script], join(directory, "early.log")), (error) => {
+    assert.deepEqual(error.smokeFailure, { checkpoint: "installer-fresh-install", reason: "SMOKE_CHECK_FAILED", visibility: "unknown", focused: false });
+    assert.equal(JSON.stringify(error).includes("PRIVATE"), false); return true;
   });
 });
 

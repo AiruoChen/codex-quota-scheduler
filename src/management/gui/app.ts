@@ -6,7 +6,7 @@ import { StateStore } from "./state.js";
 import { route, navigate, renderShell } from "./shell.js";
 import { renderOverview, tickOverview } from "./overview.js";
 import { queueView } from "./queue.js";
-import { renderRecovery } from "./recovery.js";
+import { recoveryView } from "./recovery.js";
 import { tasksView } from "./tasks.js";
 import { runsView } from "./runs.js";
 import { settingsView } from "./settings.js";
@@ -35,7 +35,7 @@ const store = new StateStore(async () => {
   if (!bootstrapped) { await bootstrap(); bootstrapped = true; }
   return api<ManagementState>("/api/state");
 }, () => {
-  renderShell(store.value); renderOverview(store.value, context); queue.render(); renderRecovery(context); tickOverview(store.now());
+  renderShell(store.value); renderOverview(store.value, context); queue.render(); recovery.render(); tickOverview(store.now());
   const jobs = store.value.data?.jobs ?? [];
   for (const job of jobs) {
     if (seenJobs.get(job.id) === "running" && job.state !== "running" && !["monitor", "scheduler"].includes(job.kind)) notice(job.state === "failed" ? `后台操作未完成：${job.code}。请检查运行记录。` : "后台操作已结束，请查看运行记录。", job.state === "failed");
@@ -44,10 +44,12 @@ const store = new StateStore(async () => {
 });
 const tasks = tasksView(context), runs = runsView(context), settings = settingsView(context);
 const queue = queueView(context);
+const recovery = recoveryView(context);
 async function loadView() {
   if (!store.value.connected) return;
   if (view === "tasks" && !tasks.editing()) await tasks.load();
   if (view === "runs") await runs.load();
+  if (view === "recovery") await recovery.load();
   if (runs.isOpen()) await runs.render();
 }
 async function refresh() { await store.refresh(); await loadView(); }
@@ -57,6 +59,7 @@ async function changeView(focus = false) {
   catch (error) { notice(error instanceof Error ? error.message : "页面读取失败", true); }
 }
 window.addEventListener("hashchange", () => { void changeView(true); });
+document.querySelector<HTMLAnchorElement>(".skip-link")?.addEventListener("click", (event) => { event.preventDefault(); $("page-title").focus(); });
 document.querySelectorAll<HTMLButtonElement>("[data-close]").forEach((node) => { node.onclick = () => $<HTMLDialogElement>(node.dataset.close!).close(); });
 document.querySelectorAll<HTMLButtonElement>("[data-action]").forEach((node) => { node.onclick = () => { void busy(node, async () => {
   const action = node.dataset.action!;

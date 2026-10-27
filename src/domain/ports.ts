@@ -1,4 +1,4 @@
-import type { ExecutionOutcome, ExecutionSink, RunUpdate, StoredTask, TaskDefinition, TaskRevision, TaskRun, TaskStatus, TaskQuery, TaskPage } from "./task.js";
+import type { ExecutionOutcome, ExecutionSink, RunUpdate, StoredTask, TaskDefinition, TaskRevision, TaskRun, TaskStatus, TaskQuery, TaskPage, RunQuery, RunPage } from "./task.js";
 import type { QuotaSnapshot } from "./quota.js";
 
 export interface Clock {
@@ -18,6 +18,7 @@ export interface TaskRepository {
 }
 
 export interface RunRepository {
+  query(query: RunQuery): Promise<RunPage>;
   create(taskId: string): Promise<TaskRun>;
   get(id: string): Promise<TaskRun | null>;
   update(id: string, update: RunUpdate, expectedStatus: TaskStatus): Promise<TaskRun>;

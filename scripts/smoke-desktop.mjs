@@ -10,6 +10,7 @@ import { desktopDebugger } from "./lib/desktop-debugger.mjs";
 import { desktopDiagnostics } from "./lib/desktop-diagnostics.mjs";
 import { guiAcceptance } from "./lib/gui-acceptance.mjs";
 import { tasksQueueAcceptance } from "./lib/tasks-queue-acceptance.mjs";
+import { runsRecoveryAcceptance } from "./lib/runs-recovery-acceptance.mjs";
 
 const args = process.argv.slice(2);
 if (args.length && (args.length !== 2 || args[0] !== "--packaged")) throw new Error("Usage: smoke-desktop.mjs [--packaged path/to/client.exe]");
@@ -71,6 +72,8 @@ try {
   const gui = await guiAcceptance(pageDebugger, artifacts);
   checkpoint = "tasks-and-queue";
   const tasksQueue = await tasksQueueAcceptance(pageDebugger);
+  checkpoint = "runs-and-recovery";
+  const runsRecovery = await runsRecoveryAcceptance(pageDebugger, artifacts);
   const image = await call("Page.captureScreenshot", { format: "png" });
   await writeFile(join(artifacts, "overview.png"), Buffer.from(image.data, "base64"));
   const record = await readInstance(configPath);
@@ -126,7 +129,7 @@ try {
     assert.ok(!appFiles.some((file) => /(^|[\\/])(node_modules|tests|\.local|\.runtime|\.git)([\\/]|$)|local\.json|\.sqlite|\.log$/.test(file)));
   }
   await writeFile(join(artifacts, "result.json"), JSON.stringify({ packaged, versions, nodeOnPath: false, source: result.source,
-    initiallyPaused: result.paused, gui, tasksQueue, singleInstance: true, controlledRestarts: 3, refreshDuringNavigation: true, isolatedLifecycleBridge: true,
+    initiallyPaused: result.paused, gui, tasksQueue, runsRecovery, singleInstance: true, controlledRestarts: 3, refreshDuringNavigation: true, isolatedLifecycleBridge: true,
     scriptErrors: pageDebugger.errors.length, gracefulExit: true }, null, 2));
   console.log(JSON.stringify({ passed: true, packaged, versions, artifacts }));
 } catch (error) {

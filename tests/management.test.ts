@@ -241,6 +241,8 @@ test("浏览器断开不取消手动执行；取消请求等待远端终止后�
     assert.equal(current?.id, runId);
     assert.equal(current?.name, "One");
     assert.ok(current && !Object.hasOwn(current, "promptSnapshot") && !Object.hasOwn(current, "output"));
+    const detail = await env.get(`/api/run?id=${runId}`) as { origin: { account: string; cliVersion: string } };
+    assert.match(detail.origin.account, /\*\*\*@/); assert.equal(typeof detail.origin.cliVersion, "string");
     const cancelling = await (await env.action("cancel", { id: runId })).json() as { run: TaskRun; cancelRequested: boolean };
     assert.equal(cancelling.run.status, "running"); assert.equal(cancelling.cancelRequested, true);
     await until(async () => (await (await env.service.app.storage()).runs.get(runId))?.status === "cancelled");
@@ -392,5 +394,20 @@ test("任务启停与入队均检查 revision，页面分页不暴露指令", as
     assert.equal(queued.taskRevision, 3); assert.equal(queued.promptSnapshot, "private page prompt");
     assert.equal((await env.get("/api/tasks/page?enabled=disabled")).total, 0);
     assert.equal((await fetch(env.server.url + "/api/tasks/page?offset=-1", { headers: { cookie: env.cookie } })).status, 400);
+  } finally { await env.cleanup(); }
+});
+
+test("运行分页按状态/项目筛选并保留历史版本，不返回正文和输出", async () => {
+  const env = await setup();
+  try {
+    await env.task("private run prompt");
+    const run = await (await env.action("enqueue", { id: "one", revision: 1 })).json() as TaskRun;
+    const page = await env.get("/api/runs/page?search=One&status=queued&limit=1");
+    assert.equal(page.total, 1); assert.ok(!JSON.stringify(page).includes("private run prompt"));
+    await env.action("cancel", { id: run.id });
+    assert.equal((await env.get("/api/runs/page?status=cancelled")).total, 1);
+    assert.equal((await env.get("/api/runs/page?status=queued")).total, 0);
+    assert.equal((await fetch(env.server.url + "/api/runs/page?status=not-a-status", { headers: { cookie: env.cookie } })).status, 400);
+    assert.equal((await env.get(`/api/run?id=${run.id}`)).origin, null);
   } finally { await env.cleanup(); }
 });

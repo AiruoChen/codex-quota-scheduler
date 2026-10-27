@@ -634,6 +634,28 @@ textarea {
   accent-color:#326744
 }
 
+#resume-authorization {
+  min-width:0;
+  border:1px solid var(--line);
+  border-radius:8px;
+  padding:14px 16px
+}
+
+#resume-authorization label {
+  flex-direction:row;
+  align-items:flex-start;
+  margin:12px 0;
+  line-height:1.6;
+  overflow-wrap:anywhere
+}
+
+#resume-authorization input[type=checkbox] {
+  width:16px;
+  flex:0 0 16px;
+  margin-top:2px;
+  accent-color:#326744
+}
+
 details {
   margin-top:23px;
   border-top:1px solid var(--line);

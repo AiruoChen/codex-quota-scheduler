@@ -4,6 +4,8 @@ import { isRecord } from "../../shared/validation.js";
 import type { StdioRpcClient } from "./rpc-client.js";
 import type { QuotaAvailability } from "../../domain/quota-policy.js";
 import { rpcDiagnostic } from "./rpc-errors.js";
+import { hasResumeAuthorization } from "../../domain/resume-authorization.js";
+import { resumeWorkspaceRoots } from "./resume-authorization.js";
 
 type Terminal = { status: string; usageLimitExceeded: boolean } | { error: AppError };
 const usageFailure = (turn: Record<string, unknown>) => isRecord(turn.error) && turn.error.codexErrorInfo === "usageLimitExceeded";
@@ -104,7 +106,8 @@ export async function runTurn(client: StdioRpcClient, threadId: string, run: Tas
       approvalPolicy: "on-request", approvalsReviewer: "user",
       sandboxPolicy: sandbox === "read-only" ? { type: "readOnly", networkAccess: false }
         : { type: "workspaceWrite", writableRoots: run.taskSnapshot.environment?.writableRoots ?? [run.taskSnapshot.projectDir], networkAccess: false, excludeSlashTmp: true, excludeTmpdirEnvVar: true },
-      ...(run.taskSnapshot.environment ? { runtimeWorkspaceRoots: run.taskSnapshot.environment.roots.length ? run.taskSnapshot.environment.roots : [run.taskSnapshot.projectDir] } : {}),
+      ...(run.taskSnapshot.environment ? { runtimeWorkspaceRoots: hasResumeAuthorization(run.taskSnapshot) ? resumeWorkspaceRoots(run.taskSnapshot) : run.taskSnapshot.environment.roots.length ? run.taskSnapshot.environment.roots : [run.taskSnapshot.projectDir] } : {}),
+      ...(hasResumeAuthorization(run.taskSnapshot) ? { environments: [] } : {}),
       ...(run.taskSnapshot.model ? { model: run.taskSnapshot.model } : {}),
       ...(execution?.effort ? { effort: execution.effort } : {}),
     });

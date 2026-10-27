@@ -5,6 +5,7 @@ import { setTimeout as delay } from "node:timers/promises";
 export async function catalogAcceptance(page, directory, checkpoint = () => {}) {
   const { call, evaluate, wait } = page, scope = "a".repeat(64);
   const requests = [], failures = [], held = [];
+  let savedAuthorization;
   let mode = "normal";
   const chat = (id, name, projectKnown = true) => ({ id, name, projectId: null, projectKnown, cwd: directory, updatedAt: null });
   const fulfill = (id, response, status = 200) => call("Fetch.fulfillRequest", { requestId: id, responseCode: status,
@@ -12,6 +13,10 @@ export async function catalogAcceptance(page, directory, checkpoint = () => {}) 
   const stop = page.on("Fetch.requestPaused", event => {
     const url = new URL(event.request.url), kind = url.pathname.split("/").at(-1);
     requests.push({ kind, method: event.request.method });
+    if (kind === "action") {
+      savedAuthorization = JSON.parse(event.request.postData);
+      void fulfill(event.requestId, { id: "synthetic-consented-task" }).catch(error => failures.push(error)); return;
+    }
     let response = { source: "codex", scope, items: [], nextCursor: null }, status = 200;
     if (kind === "models") response.items = [{ id: "fixture-model", name: "Fixture model", isDefault: true, efforts: ["low"] }];
     if (kind === "projects") response.items = [{ id: "fixture-project", name: "Fixture project", roots: [directory] }];
@@ -25,12 +30,13 @@ export async function catalogAcceptance(page, directory, checkpoint = () => {}) 
         : [chat("existing-chat", "Existing named chat"), chat("unknown-chat", "Unknown assignment chat", false)], nextCursor: url.searchParams.has("cursor") ? null : "page-2" };
       else if (filter === "none") response.items = [chat("existing-chat", "Existing named chat")];
     }
-    if (kind === "environment") response = { scope, ...(mode === "legacy" ? { sidebarProject: { id: "fixture-project", name: "Fixture desktop project", roots: [directory] } } : {}), environment: { version: 1, mode: "resume", scope, connectionKey: "b".repeat(64),
+    if (kind === "environment") response = { scope, ...(mode === "legacy" ? { sidebarProject: { id: "fixture-project", name: "Fixture desktop project", roots: [directory] },
+      authorization: { context: "c".repeat(64), cliVersion: "0.160.0-fixture", writableCandidates: [directory], allowedSandboxes: ["read-only", "workspace-write"], readScope: "local-files" } } : {}), environment: { version: 1, mode: "resume", scope, connectionKey: "b".repeat(64),
       projectId: null, projectKnown: true, roots: [], cwd: directory, writableRoots: [], permissionsVerified: false }, limitation: "Synthetic permission remains unverified" };
     void fulfill(event.requestId, response, status).catch(error => failures.push(error));
   });
   checkpoint("catalog-open");
-  await call("Fetch.enable", { patterns: [{ urlPattern: "*/api/catalog/*", requestStage: "Request" }] });
+  await call("Fetch.enable", { patterns: [{ urlPattern: "*/api/catalog/*", requestStage: "Request" }, { urlPattern: "*/api/action", requestStage: "Request" }] });
   try {
     await evaluate("location.hash='#tasks'"); await wait("!document.getElementById('tasks').hidden");
     await evaluate("document.getElementById('new-task').click()");
@@ -78,9 +84,25 @@ export async function catalogAcceptance(page, directory, checkpoint = () => {}) 
     await evaluate("document.querySelector('[name=threadId]').value='legacy-chat';document.querySelector('[name=threadId]').dispatchEvent(new Event('change'))");
     await wait("document.getElementById('task-environment').textContent.includes('Fixture desktop project')");
     assert.equal(await evaluate("document.getElementById('task-environment').textContent.includes('不继承权限')&&document.querySelector('[name=projectDir]').readOnly"), true);
-    assert.ok(requests.every(request => request.method === "GET")); assert.deepEqual(failures, []);
+    checkpoint("catalog-explicit-resume-consent");
+    assert.equal(await evaluate("!document.getElementById('resume-authorization').hidden&&!document.querySelector('[name=resumeConsent]').checked&&!document.querySelector('[name=resumeReadAll]').checked"), true);
+    await evaluate("document.querySelector('[name=name]').value='Synthetic consent only';document.querySelector('[name=prompt]').value='SYNTHETIC_ONLY';document.querySelector('#task-form button[type=submit]').click()");
+    await wait("document.getElementById('task-error').textContent.includes('请确认本机文件读取范围')");
+    assert.equal(savedAuthorization, undefined);
+    await evaluate("document.querySelector('[name=sandbox]').value='workspace-write';document.querySelector('[name=sandbox]').dispatchEvent(new Event('change'))");
+    await wait("document.querySelectorAll('#resume-writable-roots input').length===1");
+    await evaluate("document.querySelector('[name=resumeConsent]').checked=true;document.querySelector('[name=resumeReadAll]').checked=true;document.querySelector('[name=sandbox]').value='read-only';document.querySelector('[name=sandbox]').dispatchEvent(new Event('change'))");
+    assert.equal(await evaluate("!document.querySelector('[name=resumeConsent]').checked&&!document.querySelector('[name=resumeReadAll]').checked"), true);
+    await evaluate("document.getElementById('task-dialog').addEventListener('close',()=>{document.getElementById('task-dialog').dataset.acceptanceConsentClosed='done'},{once:true});document.querySelector('[name=sandbox]').value='workspace-write';document.querySelector('[name=sandbox]').dispatchEvent(new Event('change'));document.querySelector('#resume-writable-roots input').click();document.querySelector('[name=resumeReadAll]').click();document.querySelector('[name=resumeConsent]').click();document.querySelector('#task-form button[type=submit]').click()");
+    await wait("!document.getElementById('task-dialog').open&&document.getElementById('task-dialog').dataset.acceptanceConsentClosed==='done'");
+    assert.equal(savedAuthorization.action, "task-save"); assert.equal(savedAuthorization.target.threadId, "legacy-chat");
+    assert.deepEqual(savedAuthorization.target.authorization, { confirmed: true, readAllLocalFiles: true, context: "c".repeat(64), writableRoots: [directory] });
+    assert.equal(savedAuthorization.definition.environment, undefined);
+    assert.ok(requests.filter(request => request.kind !== "action").every(request => request.method === "GET"));
+    assert.equal(requests.filter(request => request.kind === "action").length, 1); assert.deepEqual(failures, []);
     return { allChatsDefault: true, emptyProjectExplained: true, explicitShowAll: true, pagination: true, retry: true, staleResponseDiscarded: true,
-      legacyProjectChatsSelectable: true, displayAssociationDoesNotGrantPermissions: true, readOnly: true };
+      legacyProjectChatsSelectable: true, displayAssociationDoesNotGrantPermissions: true, explicitConsentRequired: true, consentClearedOnPolicyChange: true,
+      authorizationSaveOnly: true, catalogReadOnly: true };
   } finally {
     await evaluate("new Promise(resolve=>{const dialog=document.getElementById('task-dialog');if(!dialog.open)return resolve(true);dialog.addEventListener('close',()=>resolve(true),{once:true});dialog.close()})").catch(() => {});
     await call("Fetch.disable"); stop();

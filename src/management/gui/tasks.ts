@@ -74,7 +74,8 @@ export function tasksView(context: UiContext) {
     $("prompt-count").textContent = `${value("prompt").length.toLocaleString("zh-CN")} 字符`;
     $("continuation-preview").textContent = (fields.namedItem("continuation") as HTMLInputElement).checked ? `${value("prompt")}\n\n请继续这个被截断的任务` : "自动续接默认关闭。仅对确认因真实额度耗尽而失败的回合生效。";
     $("continuation-preview").hidden = !(fields.namedItem("continuation") as HTMLInputElement).checked;
-    $("sandbox-help").textContent = value("sandbox") === "workspace-write" ? `允许修改项目目录：${value("projectDir") || "请先填写目录"}` : "只读权限，不允许修改项目文件。";
+    $("sandbox-help").textContent = value("session") === "resume" ? "续接权限以下方明确授权为准；读取范围和可写文件夹需分别确认。"
+      : value("sandbox") === "workspace-write" ? `允许修改项目目录：${value("projectDir") || "请先填写目录"}` : "只读权限，不允许修改项目文件。";
   }
   form.addEventListener("input", explain);
   $<HTMLDialogElement>("task-dialog").addEventListener("close", () => { opening++; catalog.close(); void load().catch((error: unknown) => notice(String(error), true)); });

@@ -3,6 +3,7 @@ import { dirname, resolve, isAbsolute } from "node:path";
 import type { TaskDefinition } from "../domain/task.js";
 import { AppError } from "../shared/errors.js";
 import { requireNumber, requireRecord, requireString } from "../shared/validation.js";
+import { hasResumeAuthorization, isResumeAuthorization } from "../domain/resume-authorization.js";
 
 export async function loadTasks(path: string): Promise<TaskDefinition[]> {
   const filePath = resolve(path);
@@ -49,6 +50,12 @@ export function parseTask(value: unknown, base: string, label = "task"): TaskDef
     task.environment = { version: 1, mode: env.mode as NonNullable<TaskDefinition["environment"]>["mode"], scope: env.scope, connectionKey: env.connectionKey,
       projectId: env.projectId, projectKnown: env.projectKnown, roots: [...env.roots as string[]], cwd: task.projectDir,
       writableRoots: [...env.writableRoots as string[]], permissionsVerified: env.permissionsVerified };
+    if (env.resumeAuthorization !== undefined) {
+      if (!isResumeAuthorization(env.resumeAuthorization)) throw new AppError("INVALID_TASK", "续接授权快照无效。");
+      const grant = env.resumeAuthorization;
+      task.environment.resumeAuthorization = { version: 1, threadId: grant.threadId, context: grant.context, cliVersion: grant.cliVersion,
+        sandbox: grant.sandbox, readScope: "local-files", networkAccess: false, approvalPolicy: "on-request", approvalsReviewer: "user" };
+    }
   }
   if (data.quotaContinuation !== undefined) {
     const policy = requireRecord(data.quotaContinuation, "quotaContinuation");
@@ -68,6 +75,7 @@ export function parseTask(value: unknown, base: string, label = "task"): TaskDef
       task.execution.effort = execution.effort as "low" | "medium" | "high" | "xhigh";
     }
   }
+  if (task.environment?.resumeAuthorization && !hasResumeAuthorization(task)) throw new AppError("INVALID_TASK", "续接授权与会话或文件权限不一致。");
   return task;
 }
 

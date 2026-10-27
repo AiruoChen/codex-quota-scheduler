@@ -1,11 +1,13 @@
-import type { CatalogPage, ModelChoice, ProjectChoice, ThreadChoice, ExecutionEnvironment } from "../../domain/catalog.js";
+import type { CatalogPage, ModelChoice, ProjectChoice, ThreadChoice, ExecutionEnvironment, ResumeAuthorizationPreview } from "../../domain/catalog.js";
 import type { StoredTask } from "../../domain/task.js";
 import { api } from "./api.js";
 import { $, el } from "./dom.js";
+import { resumeAuthorization } from "./resume-authorization.js";
 
 /** Catalog state belongs to one open editor. No account metadata is persisted in browser storage. */
 export function taskCatalog(form: HTMLFormElement, provider: () => "codex" | "mock" | undefined) {
   const select = (name: string) => form.elements.namedItem(name) as HTMLSelectElement;
+  const authorization = resumeAuthorization(form);
   let epoch = 0, threadRequest = 0, environmentRequest = 0, scope = "", cursor: string | null = null;
   let source: "codex" | "mock" | "unknown" = "unknown";
   const sourceKind = () => source;
@@ -16,6 +18,7 @@ export function taskCatalog(form: HTMLFormElement, provider: () => "codex" | "mo
     environmentRequest++;
     if (select("session").value === "resume") (form.elements.namedItem("projectDir") as HTMLInputElement).value = "";
     $("task-environment").textContent = "";
+    authorization.clear();
   }
   function clearThreads(message: string) {
     threadRequest++; cursor = null;
@@ -45,6 +48,7 @@ export function taskCatalog(form: HTMLFormElement, provider: () => "codex" | "mo
   }
   function layout() {
     const resume = select("session").value === "resume", mode = select("targetMode").value;
+    authorization.show(resume);
     select("targetMode").closest("label")!.hidden = resume;
     select("projectId").closest("label")!.hidden = !resume && mode !== "project";
     select("threadId").closest("label")!.hidden = !resume;
@@ -124,11 +128,12 @@ export function taskCatalog(form: HTMLFormElement, provider: () => "codex" | "mo
     if (!id) return;
     const valid = () => editor === epoch && current === environmentRequest && scope === expectedScope && select("threadId").value === id && select("session").value === "resume";
     try {
-      const result = await api<{ scope: string; environment: ExecutionEnvironment; limitation: string; sidebarProject?: ProjectChoice }>(`/api/catalog/environment?${new URLSearchParams({ threadId: id, scope: expectedScope })}`);
+      const result = await api<{ scope: string; environment: ExecutionEnvironment; limitation: string; sidebarProject?: ProjectChoice; authorization?: ResumeAuthorizationPreview }>(`/api/catalog/environment?${new URLSearchParams({ threadId: id, scope: expectedScope })}`);
       if (!valid()) return;
       if (result.scope !== expectedScope) throw new Error("目录账户已改变。");
       (form.elements.namedItem("projectDir") as HTMLInputElement).value = result.environment.cwd;
       const sidebar = result.sidebarProject;
+      authorization.update(result.authorization);
       $("task-environment").textContent = `实际工作目录：${result.environment.cwd}\n${sidebar ? `桌面关联项目：${sidebar.name}（只读显示关联，不继承权限）\n` : ""}关联文件夹：${(sidebar?.roots ?? result.environment.roots).join("；") || "未提供"}\n${result.limitation}`;
     } catch (error) { if (valid()) threadStatus(error instanceof Error ? error.message : "会话环境读取失败，请重新选择或刷新。"); }
   }
@@ -153,7 +158,7 @@ export function taskCatalog(form: HTMLFormElement, provider: () => "codex" | "mo
   for (const name of ["session", "targetMode"]) select(name).onchange = () => { clearThreads("请选择会话名称"); layout(); if (select("session").value === "resume") report(() => threads()); };
   select("projectId").onchange = () => { writes = []; select("projectCwd").value = ""; roots(); if (select("session").value === "resume") report(() => threads()); };
   select("threadId").onchange = () => report(environment);
-  select("sandbox").onchange = layout;
+  select("sandbox").onchange = () => { authorization.policyChanged(); layout(); };
   $("catalog-refresh").onclick = () => report(refresh);
   $("threads-more").onclick = () => report(() => threads(true));
   $("threads-retry").onclick = () => report(() => threads());
@@ -181,10 +186,10 @@ export function taskCatalog(form: HTMLFormElement, provider: () => "codex" | "mo
         return { scope, target: { mode, cwd, writableRoots: select("sandbox").value === "workspace-write" ? [cwd] : [] } };
       }
       if (!scope) throw new Error("请先成功读取真实目录。");
-      if (mode === "resume") { if (!select("threadId").value) throw new Error("请选择会话。"); return { scope, target: { mode, threadId: select("threadId").value } }; }
+      if (mode === "resume") { if (!select("threadId").value) throw new Error("请选择会话。"); return { scope, target: { mode, threadId: select("threadId").value, authorization: authorization.request() } }; }
       if (mode === "project" && (!select("projectId").value || select("projectId").value === "none" || !select("projectCwd").value)) throw new Error("请选择官方项目及本次工作目录。");
       return { scope, target: { mode, projectId: mode === "project" ? select("projectId").value : null, cwd: mode === "project" ? select("projectCwd").value : "", writableRoots: writes } };
     },
-    close() { epoch++; threadRequest++; environmentRequest++; scope = ""; },
+    close() { epoch++; threadRequest++; environmentRequest++; scope = ""; authorization.clear(); },
   };
 }

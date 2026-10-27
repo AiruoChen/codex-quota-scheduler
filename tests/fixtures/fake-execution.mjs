@@ -38,6 +38,7 @@ input.on("line", (line) => {
   if (message.method === "initialize") { result({ userAgent: "test" }); return; }
   if (message.method === "initialized") { initialized = true; return; }
   assert.ok(initialized);
+  if (message.method === "configRequirements/read") { result({ requirements: scenario === "authorization-denied" ? { allowedSandboxModes: ["read-only"] } : null }); return; }
   if (message.method === "model/list") { result({ data: [{ id: "fixture-ui-id", model: message.params.cursor ? "fixture-model-2" : "fixture-model", displayName: "Fixture", isDefault: true,
     supportedReasoningEfforts: ["none", "minimal", "low", "medium", "high", "xhigh"].map(reasoningEffort => ({ reasoningEffort })) }], nextCursor: scenario === "catalog-paged" && !message.params.cursor ? "models-page2" : null }); return; }
   if (message.method === "project/list") { result({ data: [{ id: message.params.cursor ? "official-empty-project" : "official-project-1", name: "Official fixture project", roots: message.params.cursor ? [] : [{ path: cwd }, { path: cwd + "/second" }] }], nextCursor: scenario === "catalog-paged" && !message.params.cursor ? "projects-page2" : null }); return; }
@@ -70,7 +71,7 @@ input.on("line", (line) => {
   }
   if (message.method === "thread/read") {
     result({ thread: { id: "thread-1", cwd: scenario === "wrong-project" ? cwd + "/other" : cwd,
-      ...(scenario === "catalog-paged" ? { projectId: "official-project-1", name: "Named fixture chat" } : scenario === "catalog-legacy" ? { projectId: null, name: "Legacy named chat" } : {}),
+      ...(scenario === "catalog-paged" || scenario.startsWith("authorization-") ? { projectId: "official-project-1", name: "Named fixture chat" } : scenario === "catalog-legacy" ? { projectId: null, name: "Legacy named chat" } : {}),
       historyMode: "paginated", ephemeral: false,
       status: { type: ["busy-thread", "continuation-busy"].includes(scenario) ? "active" : "idle" } } });
     return;
@@ -87,7 +88,12 @@ input.on("line", (line) => {
       return;
     }
     cwd = message.params.cwd;
-    result({ thread: { id: "thread-1", cwd, ...(Object.hasOwn(message.params, "projectId") ? { projectId: message.params.projectId } : {}), status: { type: "idle" } }, cwd, model: "fixture-model" });
+    const explicit = !!message.params.config;
+    result({ thread: { id: "thread-1", cwd, ...(explicit ? { environments: [] } : {}), ...(Object.hasOwn(message.params, "projectId") ? { projectId: message.params.projectId } : scenario === "catalog-paged" || scenario.startsWith("authorization-") ? { projectId: "official-project-1" } : {}), status: { type: "idle" } }, cwd, model: "fixture-model",
+      ...(explicit ? { approvalPolicy: "on-request", approvalsReviewer: "user", runtimeWorkspaceRoots: message.params.runtimeWorkspaceRoots,
+        sandbox: scenario === "authorization-mismatch" ? { type: "dangerFullAccess" } : message.params.sandbox === "read-only" ? { type: "readOnly", networkAccess: false }
+          : { type: "workspaceWrite", writableRoots: message.params.config["sandbox_workspace_write.writable_roots"], networkAccess: false,
+            excludeSlashTmp: message.params.config["sandbox_workspace_write.exclude_slash_tmp"], excludeTmpdirEnvVar: message.params.config["sandbox_workspace_write.exclude_tmpdir_env_var"] } } : {}) });
     return;
   }
   if (message.method === "turn/start") {

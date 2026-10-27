@@ -53,7 +53,7 @@ Electron 主进程
 本期采用 asar=false，保证普通 Node 子进程可以直接读取后端脚本；ASAR 不是加密或凭据保护措施。
 已有输出目录不自动覆盖，避免删除正在使用的分发目录；移走整个旧目录后可重新打包。
 
-产物尚未签名；[托盘与通知](DESKTOP-TRAY-NOTIFICATIONS.md)已实现，安装器、应用图标定制、更新与旧数据迁移向导由后续模块实施。
+产物尚未签名；[托盘与通知](DESKTOP-TRAY-NOTIFICATIONS.md)已实现，[当前用户安装器与旧数据迁移](DESKTOP-INSTALL-MIGRATION.md)已实现；应用图标定制、签名与自动更新由后续模块实施。
 
 ## 官方依据
 

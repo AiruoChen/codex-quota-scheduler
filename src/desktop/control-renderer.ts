@@ -22,7 +22,7 @@ const guidance: Record<string, string> = {
   RUNTIME_INCOMPATIBLE: "已有服务版本不支持当前管理协议。请先手动升级，客户端不会自动停止旧服务。",
 };
 function render(view: LifecycleView) {
-  const busy = view.phase === "starting" || view.phase === "stopping";
+  const busy = view.phase === "starting" || view.phase === "stopping" || !!view.dataBusy;
   title.textContent = names[view.phase];
   detail.textContent = view.intent ? ({ exit: "退出前先暂停派发，再按所选方式处理当前任务。", stop: "停止后台会阻止新任务派发。",
     restart: "重启后配置重新加载，队列保持暂停。", "stop-external": "这是外部启动的服务。确认后将停止它，其他连接也会受到影响。",
@@ -70,6 +70,7 @@ function render(view: LifecycleView) {
     if (command === "wait") enabled = confirming;
     if (command === "cancel") enabled = confirming && view.intent !== "recover" || view.phase === "stopping" && view.mode === "wait";
     button.disabled = !enabled;
+    if (view.dataBusy) button.disabled = true;
     button.hidden = view.phase === "stopping" ? command !== "status" && !(command === "cancel" && view.mode === "wait")
       : view.intent && !busy ? !["wait", "cancel", "keep-open", "hide"].includes(command) || command === "cancel" && view.intent === "recover"
         : !enabled;

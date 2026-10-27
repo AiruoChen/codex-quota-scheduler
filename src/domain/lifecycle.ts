@@ -22,4 +22,4 @@ export interface LifecycleState {
 export type LifecycleIntent = "exit" | "stop" | "restart" | "stop-external" | "recover";
 export const lifecycleCommands = ["start", "status", "restart", "stop", "stop-external", "recover", "exit", "wait", "cancel", "keep-open", "hide", "show", "pause", "notifications-toggle", "quota-notifications-toggle"] as const;
 export type LifecycleCommand = typeof lifecycleCommands[number];
-export interface LifecycleView extends LifecycleState { intent: LifecycleIntent | null; desktop?: import("./desktop.js").DesktopStatus }
+export interface LifecycleView extends LifecycleState { intent: LifecycleIntent | null; desktop?: import("./desktop.js").DesktopStatus; dataBusy?: boolean }

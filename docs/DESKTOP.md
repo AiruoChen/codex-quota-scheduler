@@ -1,7 +1,7 @@
 # 桌面客户端与后台生命周期
 
 已完成最小客户端及后台生命周期管理：独立窗口、模拟环境、受控启动/重启/停止、外部服务归属、等待/取消退出和 Windows x64 便携打包。
-GUI 基础框架、概览、任务与队列、运行记录与异常处理已完成，六个页面按模块组织；托盘与通知已完成；配置/帮助向导、安装器、开机启动及自动更新继续分块实施。
+GUI 基础框架、概览、任务与队列、运行记录与异常处理已完成，六个页面按模块组织；托盘、通知、安装包与数据迁移已完成；配置/帮助增强、开机启动及自动更新继续分块实施。
 额度查看、离线重连及模块说明见 [GUI 基础框架与运行概览](DESKTOP-GUI.md)。
 选型见 [技术决策](DESKTOP-TECH-DECISION.md)，完整目标见 [桌面需求](DESKTOP-CLIENT-REQUIREMENTS.md)。
 
@@ -23,7 +23,7 @@ npm.cmd run desktop -- --data-dir ".local/desktop-profile"
 npm.cmd run desktop -- --config "config/local.json"
 ```
 
-相对路径按启动命令的工作目录解析；个人路径不会写入源码。--config 必须指向有效已有配置，不自动导入或复制旧数据。
+相对路径按启动命令的工作目录解析；个人路径不会写入源码。--config 必须指向有效已有配置。导入旧数据需通过数据管理区域显式预检和确认，不自动复制。
 默认数据目录为系统当前用户 appData 下的 CodexQuotaScheduler，与源码和安装目录分离。
 同一数据目录只启动一个窗口；再次启动会唤起既有窗口，不切换其配置。不同数据目录属于独立实例。
 
@@ -37,7 +37,7 @@ npm.cmd run package:desktop
 
 生成 `.release/desktop/CodexQuotaScheduler-win32-x64/`，复制整个目录后双击 `CodexQuotaScheduler.exe`。
 不能只复制 EXE，Chromium、Node 和程序资源位于同一目录；目标机器无需另装 Node.js/npm。
-这是未签名的便携样包，暂不含安装器；再次打包前需将旧生成目录移走，脚本不会自动覆盖。
+这是未签名的便携样包。Windows 当前用户安装器运行 `npm.cmd run package:installer` 构建；见 [安装与数据迁移](DESKTOP-INSTALL-MIGRATION.md)。再次打包需选择新输出目录，脚本不会自动覆盖。
 也可以构建到新的生成目录，保留已有客户端：`npm.cmd run package:desktop -- --output-name desktop-lifecycle`。
 该命令生成 `.release/desktop-lifecycle/CodexQuotaScheduler-win32-x64/`；命名仅允许字母、数字、横线与下划线。
 
@@ -72,6 +72,10 @@ CodexQuotaScheduler/
   config/local.json         私人配置
   tasks.json                首次为空的任务导入清单
   desktop-state.json        通知偏好、检查点和脱敏记录（含有效备份）
+  desktop-profile.json      活动数据配置指针（含有效备份）
+  profiles/<UUID>/          显式导入的新数据副本
+  backups/<操作>-<UUID>/    转换前一致性备份和校验清单
+  data-versions/            客户端数据版本记录
   data/state.sqlite         任务、快照和历史
   .runtime/<摘要>/          实例身份、控制密钥及轮转日志
   ...                      Electron 自身本地状态
@@ -79,7 +83,7 @@ CodexQuotaScheduler/
 
 后台服务重启后队列保持暂停。遗留状态需按 [恢复说明](RECOVERY.md)核对，不自动释放执行权。
 损坏配置或数据库存在但缺少配置会阻止自动初始化，先保留数据并恢复有效配置。
-外部配置继续使用原数据位置，不自动搬迁；个人数据不属于便携包，也不提交 Git。
+外部配置继续使用原数据位置；通过迁移向导可导入为新副本，不自动搬迁或合库。个人数据不属于安装/便携包，也不提交 Git。
 
 ## 验证
 
@@ -91,11 +95,12 @@ npm.cmd run smoke:desktop
 npm.cmd run smoke:lifecycle
 node --experimental-sqlite scripts/smoke-desktop.mjs --packaged .release/desktop/CodexQuotaScheduler-win32-x64/CodexQuotaScheduler.exe
 node --experimental-sqlite scripts/smoke-lifecycle.mjs --packaged .release/desktop/CodexQuotaScheduler-win32-x64/CodexQuotaScheduler.exe
+node --experimental-sqlite scripts/smoke-installer.mjs --package .release/desktop/CodexQuotaScheduler-win32-x64
 ```
 
 smoke 使用独立 `.local/desktop-acceptance-*`、模拟任务和临时回环调试端口，自动打开窗口并安全退出。
 它清除子进程 PATH 中的 Node/npm，检查内置 SQLite、任务持久化、初始暂停、页面无 Node 权限、单实例与实例释放。
 截图和不含控制密钥的结果摘要留在忽略目录。本机验证不等同于干净 Windows 虚拟机验收，也不替代真实任务验收。
 
-smoke:lifecycle 仅使用本机协议替身和模拟配置，验证等待成功、取消确认、取消未确认待核对、退出不停止外部服务、确认停止外部服务、启动错误修正后显式重试，以及关闭到托盘后任务完成并准确定位，共七个场景。
+smoke:lifecycle 仅使用本机协议替身和模拟配置，验证等待成功、取消确认、取消未确认待核对、退出不停止外部服务、确认停止外部服务、启动错误修正后显式重试，以及关闭到托盘后任务完成并准确定位；安装模块再增加准备升级时等待任务、备份并退出，共八个场景。
 不使用真实账户凭据或真实任务；结果与截图放在 `.local/lifecycle-acceptance-*`。具体本轮结果见生命周期说明。

@@ -16,6 +16,8 @@ import { NotificationStore } from "./notification-store.js";
 import { noticeCopy } from "../domain/notifications.js";
 import { DesktopVisibility } from "./visibility.js";
 import type { LifecycleCommand, LifecycleIntent, LifecycleState, LifecycleView, ShutdownMode } from "../domain/lifecycle.js";
+import { DesktopDataTransfer, selectedProfile } from "./data-transfer.js";
+import { registerDataTransfer, type DataAction } from "../adapters/electron/data-transfer-ipc.js";
 
 app.setName("CodexQuotaScheduler");
 const controlPage = new URL("./public/startup.html", import.meta.url);
@@ -34,14 +36,18 @@ let tray: DesktopTray | undefined;
 let background = false, closeNotice = false, integrationStopping = false;
 let integrationReason: string | null = null;
 let polling: Promise<void> | undefined;
+let data: DesktopDataTransfer;
+let dataWork: Promise<void> | undefined;
+let profileSelected = false;
 const lifecycle = new DesktopLifecycle((exited) => new DesktopBackend(options.configPath, {
   executable: process.execPath, entry: fileURLToPath(new URL("./backend-entry.js", import.meta.url)), electron: true,
+  beforeStart: () => data.prepareStartup(),
 }, exited), changed);
 
 function view(): LifecycleView {
   const state = lifecycle.snapshot();
   const saved = notifications?.state;
-  return { ...state, ...(uiCode ? { code: uiCode, ...(state.phase === "starting" || state.phase === "stopping" ? {} : { phase: "failed" as const }) } : {}), intent,
+  return { ...state, dataBusy: !!dataWork || !!data?.busy, ...(uiCode ? { code: uiCode, ...(state.phase === "starting" || state.phase === "stopping" ? {} : { phase: "failed" as const }) } : {}), intent,
     desktop: { trayAvailable: !!saved && !!tray?.available(), hidden: !!window && !visible(window) && !visible(control), closeNotice,
       reason: integrationReason, notificationSupported: app.isReady() && nativeNotices.supported(), settings: saved ? { ...saved.settings } : null,
       notices: saved?.history.slice().reverse().map((event) => ({ id: event.id, title: (event.provider === "mock" ? "模拟环境 · " : "") + noticeCopy[event.kind].title,
@@ -90,6 +96,7 @@ const visibility = new DesktopVisibility({
 });
 function hideClient(): Promise<void> { return visibility.hide(); }
 async function openNotice(id: string) {
+  if (dataWork || data?.busy) throw new AppError("MIGRATION_BUSY", "请等待数据操作完成。");
   const notice = notifications?.state?.history.find((item) => item.id === id);
   if (!notice) throw new AppError("NOTICE_NOT_FOUND", "通知记录已过期。");
   const before = lifecycle.snapshot();
@@ -104,7 +111,7 @@ async function openNotice(id: string) {
 }
 function pollNotifications(): Promise<void> {
   if (polling) return polling;
-  if (integrationStopping || !notifications?.state || ["idle", "starting", "stopping", "stopped"].includes(lifecycle.snapshot().phase)) return Promise.resolve();
+  if (integrationStopping || dataWork || data?.busy || !notifications?.state || ["idle", "starting", "stopping", "stopped"].includes(lifecycle.snapshot().phase)) return Promise.resolve();
   return polling = (async () => {
     let feed;
     try { const checkpoint = notifications!.state!.checkpoint; feed = await lifecycle.desktopFeed({ scope: checkpoint.scope, cursor: checkpoint.cursor }); }
@@ -155,14 +162,17 @@ function changed(state: LifecycleState) {
 function connect(): Promise<void> {
   return starting ??= (async () => {
     uiCode = null; publish();
+    if (!profileSelected && !data.explicitConfig) { options.configPath = await selectedProfile(options.dataDir); profileSelected = true; }
     await initializeDesktopProfile(options);
     await lifecycle.start();
+    if (lifecycle.snapshot().connection?.owned) await data.opened();
   })().finally(() => { starting = undefined; });
 }
 async function exitClient(mode: ShutdownMode) {
   return exiting ??= (async () => {
     integrationStopping = true;
     intent = null; uiCode = null;
+    await dataWork?.catch(() => {});
     await starting?.catch(() => {});
     if (lifecycle.snapshot().connection?.owned) await lifecycle.stop(mode);
     else await lifecycle.detach();
@@ -171,6 +181,7 @@ async function exitClient(mode: ShutdownMode) {
   })().catch((error: unknown) => { integrationStopping = false; exiting = undefined; report(error); });
 }
 async function requestExit() {
+  if (dataWork || data?.busy) { showControl(); return; }
   if (exiting) { showControl(); return; }
   if (starting) {
     intent = "exit"; showControl();
@@ -186,6 +197,7 @@ async function requestExit() {
   await exitClient("cancel");
 }
 async function command(action: LifecycleCommand) {
+  if ((dataWork || data?.busy) && action !== "status") throw new AppError("MIGRATION_BUSY", "数据操作期间请保留窗口并等待完成。");
   if (action === "hide") { await hideClient(); return; }
   if (action === "show") { activateMain(); return; }
   if (action === "pause") { await lifecycle.pauseDispatch(); publish(); return; }
@@ -227,6 +239,26 @@ async function command(action: LifecycleCommand) {
   }
   intent = action; showControl();
 }
+async function transfer(action: DataAction, value?: string, path?: string): Promise<void> {
+  if (dataWork || data.busy || starting || exiting || intent || ["starting", "stopping"].includes(lifecycle.snapshot().phase)) throw new AppError("MIGRATION_BUSY", "请先完成当前切换或确认操作。");
+  dataWork = (async () => {
+    const state = lifecycle.snapshot();
+    if (action === "stop" || action === "prepare-upgrade") {
+      if (state.connection?.owned === false) throw new AppError("EXTERNAL_SERVICE", "外部服务须由其所有者安全停止；不会自动停止或复制活动数据。");
+      if (state.phase !== "stopped" && state.phase !== "idle") await lifecycle.stop("wait");
+    } else if (state.connection || !["stopped", "idle", "failed"].includes(state.phase)) {
+      throw new AppError("MIGRATION_SOURCE_ACTIVE", "请先停止当前后台，再进行备份、导入或配置切换。");
+    }
+    if (action === "preview") await data.preview(path!);
+    if (action === "commit") { await data.commit(value!); profileSelected = true; loadedUrl = ""; navigation++; }
+    if (action === "backup" || action === "prepare-upgrade") await data.backup();
+    if (action === "switch") { await data.switchProfile(value!); profileSelected = true; loadedUrl = ""; navigation++; }
+  })();
+  publish();
+  try { await dataWork; uiCode = null; }
+  finally { dataWork = undefined; publish(); }
+  if (action === "prepare-upgrade") await exitClient("wait");
+}
 async function main() {
   options = desktopOptions(process.argv.slice(app.isPackaged ? 1 : 2), join(app.getPath("appData"), "CodexQuotaScheduler"));
   app.setPath("userData", options.dataDir);
@@ -265,6 +297,9 @@ async function main() {
     void hideClient().catch(reportIntegration);
   });
   registerLifecycleControl(control, controlPage.href, { view, command, failed: operationError, openNotice });
+  data = new DesktopDataTransfer(options, app.getVersion(), process.argv.includes("--config"), publish);
+  registerDataTransfer(control, controlPage.href, { view: async () => ({ ...await data.view(), busy: !!dataWork || data.busy }),
+    action: transfer, preview: (path) => transfer("preview", undefined, path) });
   registerProjectDirectory(window, () => lifecycle.snapshot().phase === "running" ? lifecycle.snapshot().connection?.url ?? null : null);
   const invoke = (action: LifecycleCommand) => { void command(action).catch(operationError); };
   notifications = new DesktopNotifications(new NotificationStore(join(options.dataDir, "desktop-state.json")), nativeNotices, publish);
@@ -272,6 +307,7 @@ async function main() {
   tray = new DesktopTray(invoke);
   if (!tray.create()) integrationReason ??= "TRAY_UNAVAILABLE";
   Menu.setApplicationMenu(Menu.buildFromTemplate([{ label: "后台服务", submenu: [
+    { label: "安装与数据迁移…", click: () => { showControl(); control!.webContents.send("desktop-data:focus"); } },
     { label: "服务状态与通知…", click: showControl }, { label: "隐藏到托盘", click: () => invoke("hide") }, { label: "重新连接 / 启动", click: () => invoke("start") },
     { label: "关闭窗口到托盘", role: "close", accelerator: "CommandOrControl+W" },
     { label: "重启自有后台…", click: () => invoke("restart") }, { label: "停止自有后台…", click: () => invoke("stop") },

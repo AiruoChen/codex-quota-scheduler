@@ -38,6 +38,7 @@ export class ManagementService {
   private schedulerRepository: SchedulerRepository | undefined;
   private executionRepository: ExecutionRepository | undefined;
   private recoveryPromise: ReturnType<ReturnType<typeof createApp>["recovery"]> | undefined;
+  private dispatch: { reason: string | null; event: string; observedAt: string } | null = null;
 
   constructor(readonly config: AppConfig, readonly configPath: string, private readonly log: RuntimeLog = () => {},
     private readonly clock: Clock = systemClock) { this.app = createApp(config, clock); }
@@ -68,6 +69,7 @@ export class ManagementService {
     const run = active ? await (await this.app.storage()).runs.get(active.runId) : null;
     return { provider: this.config.provider, closing: this.closing, now: this.clock.now().toISOString(),
       monitor: saved,
+      dispatch: this.loop?.job.kind === "scheduler" && this.loop.job.state === "running" ? this.dispatch : null,
       quota: quotaDisplay(saved, this.config, this.clock.now()),
       currentRun: run ? { id: run.id, taskId: run.taskId, name: run.taskSnapshot.name, revision: run.taskRevision,
         status: run.status, startedAt: run.startedAt } : null,
@@ -161,9 +163,10 @@ export class ManagementService {
       const monitor = await this.app.monitoring();
       const scheduler = await this.app.scheduling();
       if (kind === "scheduler") scheduler.repository.pause("worker_started");
+      this.dispatch = null;
       this.loop = this.launch(kind, (signal) => kind === "monitor"
         ? monitor.run(signal, (update) => { if (update.events.length) this.log("quota_changed"); })
-        : scheduler.run(signal, (event) => { this.log(event.event); }));
+        : scheduler.run(signal, (event) => { this.dispatch = { reason: event.reason ?? null, event: event.event, observedAt: this.clock.now().toISOString() }; this.log(event.event); }));
       return { ...this.loop.job };
     } finally { this.changingLoop = false; }
   }
@@ -182,7 +185,14 @@ export class ManagementService {
     this.ensureOpen();
     if (action === "task-save") return this.saveTask(data);
     if (action === "task-delete") { await store.tasks.remove(requireString(data.id, "id"), revision(data.revision)); return { archived: true }; }
-    if (action === "enqueue") return scheduler.enqueue(requireString(data.id, "id"));
+    if (action === "enqueue") return scheduler.enqueue(requireString(data.id, "id"), data.revision === undefined ? undefined : revision(data.revision));
+    if (action === "task-enable") {
+      if (typeof data.enabled !== "boolean") throw new AppError("INVALID_ARGUMENT", "enabled 必须为布尔值。");
+      const task = await store.tasks.get(requireString(data.id, "id"));
+      if (!task) throw new AppError("TASK_NOT_FOUND", "任务不存在或已归档。");
+      this.ensureOpen();
+      return store.tasks.update({ ...task, enabled: data.enabled }, task.promptSnapshot, revision(data.revision));
+    }
     if (action === "remove") return scheduler.remove(requireString(data.id, "id"));
     if (action === "pause") { scheduler.pause(); return scheduler.status(); }
     if (action === "resume") {
@@ -201,7 +211,7 @@ export class ManagementService {
       const execution = await this.app.execution();
       const recovery = await this.recovery();
       return { ...this.launch(action, async (signal, started) => {
-        if (action === "run") return execution.runTask(id, signal, started);
+        if (action === "run") return execution.runTask(id, signal, started, data.revision === undefined ? undefined : revision(data.revision));
         if (action === "run-start") return execution.start(id, signal, started);
         started(id);
         const result = action === "inspect" ? await recovery.inspect(id, signal) : await recovery.reconcile(id, signal);

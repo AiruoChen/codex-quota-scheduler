@@ -82,6 +82,9 @@ export async function serveManagement(service: ManagementService, options: Serve
         if (path === "/api/bootstrap") return reply(response, 200, { csrf });
         if (path === "/api/state") return reply(response, 200, await service.state());
         if (path === "/api/tasks") return reply(response, 200, await service.tasks());
+        if (path === "/api/tasks/page") return reply(response, 200, await store.tasks.query({ search: url.searchParams.get("search") ?? "",
+          enabled: (url.searchParams.get("enabled") ?? "all") as "all" | "enabled" | "disabled",
+          offset: Number(url.searchParams.get("offset") ?? 0), limit: Number(url.searchParams.get("limit") ?? 25) }));
         if (path === "/api/task") {
           const task = await store.tasks.get(id);
           if (!task) throw new AppError("TASK_NOT_FOUND", "任务不存在或已归档。");

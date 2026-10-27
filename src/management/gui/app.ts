@@ -5,7 +5,7 @@ import type { UiContext } from "./context.js";
 import { StateStore } from "./state.js";
 import { route, navigate, renderShell } from "./shell.js";
 import { renderOverview, tickOverview } from "./overview.js";
-import { renderQueue } from "./queue.js";
+import { queueView } from "./queue.js";
 import { renderRecovery } from "./recovery.js";
 import { tasksView } from "./tasks.js";
 import { runsView } from "./runs.js";
@@ -35,7 +35,7 @@ const store = new StateStore(async () => {
   if (!bootstrapped) { await bootstrap(); bootstrapped = true; }
   return api<ManagementState>("/api/state");
 }, () => {
-  renderShell(store.value); renderOverview(store.value, context); renderQueue(context); renderRecovery(context); tickOverview(store.now());
+  renderShell(store.value); renderOverview(store.value, context); queue.render(); renderRecovery(context); tickOverview(store.now());
   const jobs = store.value.data?.jobs ?? [];
   for (const job of jobs) {
     if (seenJobs.get(job.id) === "running" && job.state !== "running" && !["monitor", "scheduler"].includes(job.kind)) notice(job.state === "failed" ? `后台操作未完成：${job.code}。请检查运行记录。` : "后台操作已结束，请查看运行记录。", job.state === "failed");
@@ -43,6 +43,7 @@ const store = new StateStore(async () => {
   seenJobs.clear(); for (const job of jobs) seenJobs.set(job.id, job.state);
 });
 const tasks = tasksView(context), runs = runsView(context), settings = settingsView(context);
+const queue = queueView(context);
 async function loadView() {
   if (!store.value.connected) return;
   if (view === "tasks" && !tasks.editing()) await tasks.load();

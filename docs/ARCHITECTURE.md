@@ -187,7 +187,7 @@ CLI 和桌面打包共用源码派生的文件白名单，桌面包额外包含�
 具体选型依据及后续边界见 DESKTOP-TECH-DECISION.md。
 
 DesktopLifecycle 使用领域 BackendSession 接口协调互斥的启动、停止与重启，健康检查只重验连接，不自动创建新进程。
-独立状态窗口使用受限 preload，Electron IPC 校验与命令白名单位于 adapters/electron；管理页面仍没有桌面桥接。
+独立状态窗口使用受限生命周期 preload，管理窗口的隔离 preload 只提供目录选择；校验位于 adapters/electron，管理页没有 Node 权限、生命周期或通用 IPC。
 ManagementService 在停止入口同步关闭新操作并暂停自有调度，wait 不中断活动执行，cancel 可以显式升级等待过程。
 HTTP 控制状态/取消接口在等待期间可用；后台工作、处理器和响应排空后关闭剩余连接，再关闭存储。
 完整退出语义及验证见 DESKTOP-LIFECYCLE.md。

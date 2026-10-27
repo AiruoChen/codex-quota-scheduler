@@ -22,6 +22,9 @@ export async function guiAcceptance(page, directory) {
   await evaluate("document.getElementById('task-form').elements.namedItem('prompt').value='Synthetic revision two.';document.getElementById('task-form').requestSubmit()");
   await wait("!document.getElementById('task-dialog').open && [...document.querySelectorAll('#task-rows tr')].some(row=>row.textContent.includes('gui-smoke') && row.textContent.includes('v2'))");
   await evaluate("[...document.querySelectorAll('#task-rows tr')].find(row=>row.textContent.includes('gui-smoke')).querySelectorAll('button')[1].click()");
+  await wait("document.getElementById('snapshot-dialog').open && document.getElementById('snapshot-body').textContent.includes('Synthetic revision two.')");
+  await evaluate("document.getElementById('snapshot-confirm').click()");
+  await wait("!document.getElementById('snapshot-dialog').open");
   await wait("fetch('/api/state').then(r=>r.json()).then(s=>s.scheduler.queue.some(q=>q.taskId==='gui-smoke' && q.revision===2))");
   await evaluate("location.hash='#queue'");
   await wait("!document.getElementById('queue').hidden && document.getElementById('queue-items').textContent.includes('gui-smoke')");

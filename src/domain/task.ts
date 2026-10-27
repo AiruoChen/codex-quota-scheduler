@@ -57,6 +57,9 @@ export interface TaskRevision {
   createdAt: string;
 }
 
+export interface TaskQuery { search: string; enabled: "all" | "enabled" | "disabled"; offset: number; limit: number }
+export interface TaskPage { items: Omit<StoredTask, "promptSnapshot">[]; total: number; offset: number; limit: number }
+
 export interface RunUpdate {
   status: TaskStatus;
   startedAt?: string | null;

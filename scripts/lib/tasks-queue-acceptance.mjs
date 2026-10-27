@@ -21,23 +21,29 @@ export async function tasksQueueAcceptance(page, taskId, checkpoint = () => {}) 
   await evaluate("document.getElementById('task-form').elements.namedItem('prompt').value='Unsaved fixture draft';document.getElementById('task-form').requestSubmit()");
   await wait("document.getElementById('task-error').textContent.includes('TASK_CONFLICT')");
   assert.equal(await evaluate("document.getElementById('task-form').elements.namedItem('prompt').value"), "Unsaved fixture draft");
-  await evaluate("document.getElementById('task-dialog').close()");
+  await evaluate("new Promise(resolve=>{const dialog=document.getElementById('task-dialog');dialog.addEventListener('close',()=>resolve(true),{once:true});dialog.close()})");
   checkpoint("tasks-conflict-preview");
   await wait("document.querySelector('#task-rows tr').textContent.includes('v3')");
   await evaluate("document.querySelectorAll('#task-rows button')[1].click()");
   await wait("document.getElementById('snapshot-dialog').open && document.getElementById('snapshot-title').textContent.includes('v3')");
   await evaluate(compete);
+  await wait("!document.getElementById('snapshot-confirm').disabled");
   await evaluate("document.getElementById('snapshot-confirm').click()");
   await wait("document.getElementById('snapshot-error').textContent.includes('TASK_CONFLICT')");
   assert.equal(await evaluate("fetch('/api/state').then(r=>r.json()).then(s=>s.scheduler.queue.filter(q=>q.taskId==='gui-smoke').length)"), 1);
-  await evaluate("document.getElementById('snapshot-dialog').close()");
-  checkpoint("tasks-deduplicate");
+  await evaluate("new Promise(resolve=>{const dialog=document.getElementById('snapshot-dialog');dialog.addEventListener('close',()=>resolve(true),{once:true});dialog.close()})");
+  checkpoint("tasks-dedup-version");
   await wait("document.querySelector('#task-rows tr').textContent.includes('v4')");
   for (let index=0;index<2;index++) {
+    checkpoint(`tasks-dedup-open-${index + 1}`);
+    await wait("!document.querySelectorAll('#task-rows button')[1].disabled");
     await evaluate("document.querySelectorAll('#task-rows button')[1].click()");
     await wait("document.getElementById('snapshot-dialog').open");
-    await evaluate("document.getElementById('snapshot-confirm').click()");
-    await wait("!document.getElementById('snapshot-dialog').open");
+    checkpoint(`tasks-dedup-confirm-${index + 1}`);
+    await wait("!document.getElementById('snapshot-confirm').disabled");
+    // close() queues its event; wait for application cleanup before reopening the shared dialog.
+    await evaluate("(()=>{const dialog=document.getElementById('snapshot-dialog');dialog.dataset.acceptanceClose='pending';dialog.addEventListener('close',()=>{dialog.dataset.acceptanceClose='done'},{once:true});document.getElementById('snapshot-confirm').click()})()");
+    await wait("!document.getElementById('snapshot-dialog').open && document.getElementById('snapshot-dialog').dataset.acceptanceClose==='done' && !document.getElementById('snapshot-confirm').hasAttribute('aria-busy')");
   }
   const entries = await evaluate("fetch('/api/state').then(r=>r.json()).then(s=>s.scheduler.queue.filter(q=>q.taskId==='gui-smoke'))");
   assert.deepEqual(entries.map(q=>q.revision), [2,4]);

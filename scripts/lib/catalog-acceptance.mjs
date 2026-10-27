@@ -72,7 +72,7 @@ export async function catalogAcceptance(page, directory, checkpoint = () => {}) 
     assert.ok(requests.every(request => request.method === "GET")); assert.deepEqual(failures, []);
     return { allChatsDefault: true, emptyProjectExplained: true, explicitShowAll: true, pagination: true, retry: true, staleResponseDiscarded: true, readOnly: true };
   } finally {
-    await evaluate("document.getElementById('task-dialog').close()").catch(() => {});
+    await evaluate("new Promise(resolve=>{const dialog=document.getElementById('task-dialog');if(!dialog.open)return resolve(true);dialog.addEventListener('close',()=>resolve(true),{once:true});dialog.close()})").catch(() => {});
     await call("Fetch.disable"); stop();
   }
 }

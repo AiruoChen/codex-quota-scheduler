@@ -18,5 +18,24 @@ export interface ExecutionEnvironment {
   cwd: string;
   writableRoots: string[];
   permissionsVerified: boolean;
+  resumeAuthorization?: ResumeAuthorization;
+}
+export interface ResumeAuthorization {
+  version: 1;
+  threadId: string;
+  context: string;
+  cliVersion: string;
+  sandbox: "read-only" | "workspace-write";
+  readScope: "local-files";
+  networkAccess: false;
+  approvalPolicy: "on-request";
+  approvalsReviewer: "user";
+}
+export interface ResumeAuthorizationPreview {
+  context: string;
+  cliVersion: string;
+  writableCandidates: string[];
+  allowedSandboxes: Array<"read-only" | "workspace-write">;
+  readScope: "local-files";
 }
 export interface CatalogPage<T> { scope: string; items: T[]; nextCursor: string | null; desktopStatus?: DesktopCatalogStatus }

@@ -6,6 +6,7 @@ import type { ExecutionEnvironment } from "../domain/catalog.js";
 import { CodexCatalog } from "../adapters/codex/catalog.js";
 import { AppError } from "../shared/errors.js";
 import { requireRecord, requireString } from "../shared/validation.js";
+import { authorizeResume } from "../adapters/codex/resume-authorization.js";
 
 export async function resolveTaskTarget(config: AppConfig, configPath: string, input: unknown, scopeValue: unknown,
   identity: string, sandbox: unknown): Promise<{ environment: ExecutionEnvironment; threadId?: string }> {
@@ -15,9 +16,9 @@ export async function resolveTaskTarget(config: AppConfig, configPath: string, i
   const catalog = new CodexCatalog(config.codex);
   if (target.mode === "resume") {
     const threadId = requireString(target.threadId, "threadId"), found = await catalog.environment(threadId, scope);
-    // Native stored-thread metadata currently exposes no complete effective permission snapshot.
-    if (!found.environment.permissionsVerified) throw new AppError("CODEX_ENVIRONMENT_UNVERIFIED", found.limitation);
-    return { environment: found.environment, threadId };
+    if (target.authorization === undefined) throw new AppError("CODEX_ENVIRONMENT_UNVERIFIED", found.limitation);
+    if (!found.authorization) throw new AppError("CODEX_AUTHORIZATION_UNSUPPORTED", "当前无法验证续接授权策略，请刷新目录并核对 CLI 与管理策略。");
+    return { environment: await authorizeResume(found.environment, found.authorization, threadId, target.authorization, sandbox ?? "read-only"), threadId };
   }
   if (!["project", "unassigned", "folder"].includes(String(target.mode))) throw new AppError("INVALID_ARGUMENT", "任务执行方式无效。");
   let cwd = typeof target.cwd === "string" ? target.cwd : "";

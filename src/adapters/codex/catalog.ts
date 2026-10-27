@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import { isAbsolute } from "node:path";
-import type { CatalogPage, ModelChoice, ProjectChoice, ThreadChoice, ExecutionEnvironment } from "../../domain/catalog.js";
+import type { CatalogPage, ModelChoice, ProjectChoice, ThreadChoice, ExecutionEnvironment, ResumeAuthorizationPreview } from "../../domain/catalog.js";
 import type { CodexOptions } from "./launcher.js";
 import { connectCodex, readAccount } from "./session.js";
 import { codexConnectionKey } from "./connection-key.js";
@@ -11,6 +11,7 @@ import { isRecord, requireString } from "../../shared/validation.js";
 import type { StdioRpcClient } from "./rpc-client.js";
 import { readSidebarState, type SidebarReader, type SidebarState } from "./sidebar-state.js";
 import { bindSidebarProject, displayedProject, readSidebarCursor, sidebarCursor } from "./sidebar-projects.js";
+import { resumePreview, resumeRequirements } from "./resume-authorization.js";
 
 export const catalogScope = (options: CodexOptions, account: unknown): string => createHash("sha256").update(JSON.stringify([codexConnectionKey(options), account])).digest("hex");
 const text = (value: unknown) => typeof value === "string" && value.length > 0 && value.length <= 4000 ? value : null;
@@ -47,14 +48,14 @@ export class CodexCatalog {
     } while (cursor);
     return ids;
   }
-  private async read<T>(operation: (client: StdioRpcClient, scope: string) => Promise<T>, expectedScope?: string): Promise<T> {
-    const { client } = await connectCodex(this.options, undefined, true);
+  private async read<T>(operation: (client: StdioRpcClient, scope: string, cliVersion: string) => Promise<T>, expectedScope?: string): Promise<T> {
+    const { client, launch } = await connectCodex(this.options, undefined, true);
     try {
       const before = await readAccount(client);
       if (!hasQuotaIdentity(before)) throw new AppError("ACCOUNT_UNKNOWN", "目录查询缺少可验证账户。");
       const scope = catalogScope(this.options, before);
       if (expectedScope && scope !== expectedScope) throw new AppError("CATALOG_SCOPE_CHANGED", "账户或连接已改变，请重新加载模型、项目和会话。");
-      const result = await operation(client, scope);
+      const result = await operation(client, scope, launch.version);
       if (catalogScope(this.options, await readAccount(client)) !== scope) throw new AppError("CATALOG_SCOPE_CHANGED", "查询期间账户改变，请重新加载。");
       return result;
     } finally { await client.close(); }
@@ -106,8 +107,8 @@ export class CodexCatalog {
       return { scope, items, nextCursor: next && state.status === "ready" ? sidebarCursor(next, scope, projectId, state.snapshot.revision) : next, desktopStatus: state.status };
     }, expectedScope);
   }
-  environment(threadId: string, expectedScope?: string): Promise<{ scope: string; thread: ThreadChoice; environment: ExecutionEnvironment; limitation: string; sidebarProject?: ProjectChoice }> {
-    return this.read(async (client, scope) => {
+  environment(threadId: string, expectedScope?: string): Promise<{ scope: string; thread: ThreadChoice; environment: ExecutionEnvironment; limitation: string; sidebarProject?: ProjectChoice; authorization?: ResumeAuthorizationPreview }> {
+    return this.read(async (client, scope, cliVersion) => {
       const response = await client.request("thread/read", { threadId, includeTurns: false });
       if (!isRecord(response)) throw new AppError("CODEX_PROTOCOL_ERROR", "会话读取失败。");
       const selected = thread(response.thread);
@@ -131,9 +132,16 @@ export class CodexCatalog {
         if (sidebarProject.id !== enriched.projectBinding.projectId) throw new AppError("THREAD_MISMATCH", "桌面关联项目标识不一致。");
       }
       await this.verifySidebar(state);
-      return { scope, thread: enriched, ...(sidebarProject ? { sidebarProject } : {}), environment: { version: 1, mode: "resume", scope, connectionKey: codexConnectionKey(this.options),
-        projectId: selected.projectId, projectKnown: selected.projectKnown, roots, cwd, writableRoots: [], permissionsVerified: false },
-        limitation: "已读取会话实际目录和项目文件夹；当前只读协议没有完整有效权限，完整环境续接暂不可执行。" };
+      const environment: ExecutionEnvironment = { version: 1, mode: "resume", scope, connectionKey: codexConnectionKey(this.options),
+        projectId: selected.projectId, projectKnown: selected.projectKnown, roots, cwd, writableRoots: [], permissionsVerified: false };
+      let authorization: ResumeAuthorizationPreview | undefined;
+      try {
+        const candidates = await Promise.all((sidebarProject?.roots ?? roots).map(path => realpath(path).catch(() => null)));
+        authorization = resumePreview(scope, threadId, environment, candidates.filter((path): path is string => path !== null), cliVersion, await resumeRequirements(client));
+      } catch { /* Metadata remains readable when explicit authorization cannot be verified. */ }
+      return { scope, thread: enriched, ...(sidebarProject ? { sidebarProject } : {}), environment, ...(authorization ? { authorization } : {}),
+        limitation: authorization ? "原会话完整权限尚未继承；可在下方为本任务明确授权。网络关闭，审批请求不会自动同意。"
+          : "已读取会话目录，但当前无法验证可用授权策略；请核对 CLI 与管理策略后刷新。" };
     }, expectedScope);
   }
   newEnvironment(projectId: string | null, cwd: string, writableRoots: string[], expectedScope: string): Promise<ExecutionEnvironment> {

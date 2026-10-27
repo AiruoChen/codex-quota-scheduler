@@ -21,6 +21,7 @@ export function taskPreview(context: UiContext) {
       el("dt", {}, "优先级"), el("dd", {}, task.priority), el("dt", {}, "模型 / 推理"), el("dd", {}, `${task.model ?? "Codex 默认"} / ${task.execution?.effort ?? "默认"}`),
       el("dt", {}, "会话"), el("dd", {}, task.session.mode === "new" ? "新建会话" : `续接 ${task.session.threadId}`), el("dt", {}, "保存时间"), el("dd", {}, time(task.updatedAt))),
       el("p", { class: "hint" }, task.quotaContinuation?.enabled ? `已开启额度中断续接，最多 ${task.quotaContinuation.maxAttempts} 次；原始指令后追加“请继续这个被截断的任务”。` : "额度中断自动续接未开启。"),
+      ...(task.environment?.resumeAuthorization ? [el("p", { class: "hint" }, "本版本已明确授权续接：允许读取本机当前账户可读文件，写入仅限上列已确认目录，网络关闭；额外审批不会自动同意。执行前重新核验授权。原会话权限未宣称完整继承。")] : []),
       el("h2", {}, "将保存的指令快照"), el("pre", {}, task.promptSnapshot), el("p", { class: "hint" }, "确认时校验此版本。同一版本重复入队会返回既有记录，不会重复提交。"));
     $("snapshot-error").textContent = "";
     confirm.textContent = action === "enqueue" ? "确认加入队列" : "确认手动执行";

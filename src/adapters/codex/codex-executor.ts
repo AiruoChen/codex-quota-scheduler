@@ -11,7 +11,9 @@ import { runTurn } from "./turn-runner.js";
 import type { QuotaSnapshot } from "../../domain/quota.js";
 import { codexConnectionKey } from "./connection-key.js";
 import type { StdioRpcClient } from "./rpc-client.js";
-import { catalogScope } from "./catalog.js";
+import { catalogScope, CodexCatalog } from "./catalog.js";
+import { hasResumeAuthorization } from "../../domain/resume-authorization.js";
+import { resumeConfig, resumeWorkspaceRoots, resumeRequirements, verifyResumedAuthorization } from "./resume-authorization.js";
 import { continuationReady, quotaInterruption } from "../../domain/continuation.js";
 import { validateModel } from "./model-validation.js";
 
@@ -37,7 +39,8 @@ export class CodexExecutor implements TaskExecutor {
     if (!(await stat(run.taskSnapshot.projectDir)).isDirectory()) throw new AppError("PROJECT_NOT_FOUND", "任务工作目录不是有效目录。");
     if (!run.promptSnapshot.trim()) throw new AppError("EMPTY_PROMPT", "任务指令为空。");
     const environment = run.taskSnapshot.environment;
-    if (environment && !environment.permissionsVerified) throw new AppError("CODEX_ENVIRONMENT_UNVERIFIED", "执行环境权限信息不完整，不能发送任务。");
+    const explicitlyAuthorized = hasResumeAuthorization(run.taskSnapshot);
+    if (environment && !environment.permissionsVerified && !explicitlyAuthorized) throw new AppError("CODEX_ENVIRONMENT_UNVERIFIED", "执行环境权限信息不完整，不能发送任务。");
     const { client, launch } = await connectCodex(this.config.codex, signal, !!environment);
     try {
       let quota = await this.verifiedQuota(client, launch.version, signal, expectedAccount);
@@ -45,6 +48,12 @@ export class CodexExecutor implements TaskExecutor {
       if (continuation && (continuation.connectionKey !== codexConnectionKey(this.config.codex) || continuation.accountScope !== catalogScope(this.config.codex, quota.account))) throw new AppError("CONTINUATION_SCOPE_CHANGED", "续接链的账户或来源发生变化，请人工核对。");
       if (continuation && !continuationReady(continuation.evidence, quota, this.config, this.clock.now())) return { status: "waiting_quota", output: "", error: "QUOTA_WAIT: awaiting_confirmed_reset" };
       if (environment && (environment.connectionKey !== codexConnectionKey(this.config.codex) || environment.scope !== catalogScope(this.config.codex, quota.account))) throw new AppError("CATALOG_SCOPE_CHANGED", "任务环境与当前账户或来源不一致。");
+      if (explicitlyAuthorized && environment) {
+        const current = await new CodexCatalog(this.config.codex).environment(environment.resumeAuthorization!.threadId, environment.scope);
+        if (current.authorization?.context !== environment.resumeAuthorization!.context || launch.version !== environment.resumeAuthorization!.cliVersion
+          || !(await resumeRequirements(client, signal)).includes(environment.resumeAuthorization!.sandbox)) throw new AppError("CODEX_AUTHORIZATION_CHANGED", "会话环境、CLI 或管理策略已变化，请编辑任务并重新授权。");
+        for (const path of [environment.cwd, ...environment.writableRoots]) if (await realpath(path) !== path) throw new AppError("CODEX_AUTHORIZATION_CHANGED", "授权文件夹定位已变化，请重新授权。");
+      }
       if (environment?.projectId) {
         const project = await client.request("project/read", { projectId: environment.projectId }, signal);
         if (!isRecord(project) || !isRecord(project.project) || !Array.isArray(project.project.roots)) throw new AppError("CODEX_ENVIRONMENT_UNVERIFIED", "项目文件夹信息不可用。");
@@ -52,7 +61,8 @@ export class CodexExecutor implements TaskExecutor {
           if (!isRecord(root) || typeof root.path !== "string") throw new AppError("CODEX_ENVIRONMENT_UNVERIFIED", "项目目录响应无效。");
           return realpath(root.path);
         }));
-        if (JSON.stringify(paths.slice().sort()) !== JSON.stringify(environment.roots.slice().sort())) throw new AppError("PROJECT_CHANGED", "项目关联文件夹已变化，请重新核对任务环境。");
+        const expectedRoots = await Promise.all(environment.roots.map(path => realpath(path)));
+        if (JSON.stringify(paths.slice().sort()) !== JSON.stringify(expectedRoots.slice().sort())) throw new AppError("PROJECT_CHANGED", "项目关联文件夹已变化，请重新核对任务环境。");
       }
       const availability = this.quotaGuard.observe(quota);
       const decision = availability.status === "available" ? { action: "run", taskId: run.taskId } : { action: "wait", reason: availability.reason };
@@ -75,13 +85,19 @@ export class CodexExecutor implements TaskExecutor {
       }
       const response = await client.request(task.session.mode === "new" ? "thread/start" : "thread/resume", {
         ...(task.session.mode === "resume" ? { threadId: task.session.threadId, excludeTurns: true } : {}),
-        ...(environment ? { runtimeWorkspaceRoots: environment.roots.length ? environment.roots : [environment.cwd],
+        ...(environment ? { runtimeWorkspaceRoots: explicitlyAuthorized ? resumeWorkspaceRoots(task) : environment.roots.length ? environment.roots : [environment.cwd],
           ...(task.session.mode === "new" && environment.projectKnown ? { projectId: environment.projectId } : {}) } : {}),
+        ...(explicitlyAuthorized ? { config: resumeConfig(task) } : {}),
         cwd: task.projectDir, approvalPolicy: "on-request", approvalsReviewer: "user", sandbox: task.execution?.sandbox ?? "read-only",
         ...(task.model ? { model: task.model } : {}),
       }, signal);
       if (!isRecord(response) || !isRecord(response.thread) || typeof response.thread.id !== "string") throw new AppError("CODEX_PROTOCOL_ERROR", "会话响应缺少 thread.id。");
       const thread = response.thread;
+      if (explicitlyAuthorized) {
+        try { await verifyResumedAuthorization(response, task); }
+        catch { return { status: "needs_attention", output: "", error: "CODEX_AUTHORIZATION_MISMATCH: 服务端实际权限未通过核验，未发送指令；请人工核对会话后重新授权。" }; }
+        sink.event("resume_authorization_verified", { version: 1, sandbox: task.execution?.sandbox ?? "read-only", readScope: "local-files", networkAccess: false, writableFolderCount: environment!.writableRoots.length });
+      }
       if (environment?.projectKnown && thread.projectId !== environment.projectId) throw new AppError("PROJECT_CHANGED", "服务端返回的项目归属与任务快照不一致。");
       if (isRecord(thread.status) && thread.status.type === "active") throw new AppError("THREAD_BUSY", "目标会话已有活动回合，不能追加指令。");
       if (task.session.mode === "resume") {

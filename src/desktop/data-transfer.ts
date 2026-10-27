@@ -90,7 +90,7 @@ export class DesktopDataTransfer {
   private async source(configPath: string) {
     // Inspect reparse points directly. realpath string equality incorrectly rejects Windows 8.3 aliases.
     await assertDataPath(configPath);
-    await noService(configPath); await verifyBundle(configPath, this.version);
+    await noService(configPath); await this.compatibility(configPath);
     const config = await loadConfig(configPath);
     if (config.storage.databasePath === ":memory:") throw new AppError("MIGRATION_DATABASE", "内存数据库不能迁移，请选择持久化数据。");
     const inspection = inspectProfileDatabase(config.storage.databasePath);
@@ -200,12 +200,8 @@ export class DesktopDataTransfer {
   private async select(id: string): Promise<void> {
     if (!profileId(id)) throw new AppError("INVALID_ARGUMENT", "数据配置标识无效。");
     const path = profilePath(this.options.dataDir, id);
+    await this.compatibility(path);
     await managedDirectory(dirname(path)); await loadConfig(path);
-    if (id !== "default") {
-      const marker = await previousJson(join(dirname(path), "profile.json"));
-      if (!isRecord(marker) || marker.format !== 1 || typeof marker.clientVersion !== "string") throw new AppError("MIGRATION_STATE_INVALID", "数据配置尚未完成导入。");
-      if (compareVersions(marker.clientVersion, this.version) > 0) throw new AppError("DESKTOP_DOWNGRADE", "所选数据配置来自更新的客户端。");
-    }
     const pointer = selectionPath(this.options.dataDir), previous = await previousJson(pointer);
     if (previous !== null) {
       if (!isRecord(previous) || previous.version !== 1 || !profileId(previous.profile)) throw new AppError("MIGRATION_STATE_INVALID", "活动配置损坏，不会覆盖。");
@@ -219,6 +215,7 @@ export class DesktopDataTransfer {
       await noService(this.options.configPath);
       const target = profilePath(this.options.dataDir, id);
       if (!profileId(id)) throw new AppError("INVALID_ARGUMENT", "数据配置标识无效。");
+      await this.compatibility(target);
       const config = await loadConfig(target);
       if (await exists(config.storage.databasePath)) await this.source(target);
       else {
@@ -233,14 +230,29 @@ export class DesktopDataTransfer {
     const normalized = resolve(path);
     return join(this.options.dataDir, "data-versions", checksum(process.platform === "win32" ? normalized.toLowerCase() : normalized) + ".json");
   }
+  /** Validate every available version source before opening, copying, selecting or rewriting a profile. */
+  private async compatibility(path: string): Promise<{ clientVersion: string; initialized: boolean } | null> {
+    await verifyBundle(path, this.version);
+    const directory = dirname(resolve(path)), marker = await previousJson(join(directory, "profile.json"));
+    const component = (name: string) => process.platform === "win32" ? name.toLowerCase() : name;
+    const imported = component(basename(path)) === "config.json" && uuid.test(component(basename(directory)))
+      && component(basename(dirname(directory))) === "profiles";
+    if (marker !== null || imported) {
+      if (!isRecord(marker) || marker.format !== 1 || typeof marker.clientVersion !== "string") throw new AppError("MIGRATION_STATE_INVALID", "数据配置尚未完成导入或版本标记损坏。");
+      if (compareVersions(marker.clientVersion, this.version) > 0) throw new AppError("DESKTOP_DOWNGRADE", "数据配置来自更新的客户端，请使用匹配版本。");
+    }
+    const record = await previousJson(this.versionFile(path));
+    if (record === null) return null;
+    if (!isRecord(record) || typeof record.clientVersion !== "string" || typeof record.initialized !== "boolean") {
+      throw new AppError("MIGRATION_STATE_INVALID", "数据版本记录损坏，请保留原件与备份。");
+    }
+    if (compareVersions(record.clientVersion, this.version) > 0) throw new AppError("DESKTOP_DOWNGRADE", "此数据已由更新版本打开，请使用匹配客户端或从备份导入独立副本。");
+    return { clientVersion: record.clientVersion, initialized: record.initialized };
+  }
   async prepareStartup(): Promise<void> {
     return this.exclusive(async () => {
-      const config = await loadConfig(this.options.configPath), record = await previousJson(this.versionFile());
+      const record = await this.compatibility(this.options.configPath), config = await loadConfig(this.options.configPath);
       if (config.storage.databasePath === ":memory:") return;
-      if (record !== null && (!isRecord(record) || typeof record.clientVersion !== "string" || typeof record.initialized !== "boolean")) {
-        throw new AppError("MIGRATION_STATE_INVALID", "数据版本记录损坏，请保留原件与备份。");
-      }
-      if (isRecord(record) && compareVersions(record.clientVersion as string, this.version) > 0) throw new AppError("DESKTOP_DOWNGRADE", "此数据已由更新版本打开，请使用匹配客户端或从备份导入独立副本。");
       if (!await exists(config.storage.databasePath)) {
         if (isRecord(record) && record.initialized) throw new AppError("STORAGE_MISSING", "已初始化数据库缺失，不会重建空库，请核对备份。");
         await saveDataJson(this.versionFile(), { clientVersion: this.version, initialized: false }); return;
@@ -261,6 +273,9 @@ export class DesktopDataTransfer {
     });
   }
   async opened(): Promise<void> {
-    await saveDataJson(this.versionFile(), { clientVersion: this.version, initialized: true, schema: migrations.length });
+    await this.exclusive(async () => {
+      await this.compatibility(this.options.configPath);
+      await saveDataJson(this.versionFile(), { clientVersion: this.version, initialized: true, schema: migrations.length });
+    });
   }
 }

@@ -1,4 +1,5 @@
-import { app, BrowserWindow, Menu, powerMonitor, session } from "electron";
+import { app, BrowserWindow, Menu, powerMonitor, session, shell } from "electron";
+import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DesktopBackend } from "./backend.js";
@@ -18,6 +19,7 @@ import { DesktopVisibility } from "./visibility.js";
 import type { LifecycleCommand, LifecycleIntent, LifecycleState, LifecycleView, ShutdownMode } from "../domain/lifecycle.js";
 import { DesktopDataTransfer, selectedProfile } from "./data-transfer.js";
 import { registerDataTransfer, type DataAction } from "../adapters/electron/data-transfer-ipc.js";
+import { assertDataPath } from "./data-files.js";
 
 app.setName("CodexQuotaScheduler");
 const controlPage = new URL("./public/startup.html", import.meta.url);
@@ -299,7 +301,13 @@ async function main() {
   registerLifecycleControl(control, controlPage.href, { view, command, failed: operationError, openNotice });
   data = new DesktopDataTransfer(options, app.getVersion(), process.argv.includes("--config"), publish);
   registerDataTransfer(control, controlPage.href, { view: async () => ({ ...await data.view(), busy: !!dataWork || data.busy }),
-    action: transfer, preview: (path) => transfer("preview", undefined, path) });
+    action: transfer, preview: (path) => transfer("preview", undefined, path),
+    openDirectory: async () => {
+      await assertDataPath(options.dataDir);
+      if (!(await stat(options.dataDir)).isDirectory() || await shell.openPath(options.dataDir)) {
+        throw new AppError("DESKTOP_OPEN_DIRECTORY_FAILED", "无法打开用户数据目录。");
+      }
+    } });
   registerProjectDirectory(window, () => lifecycle.snapshot().phase === "running" ? lifecycle.snapshot().connection?.url ?? null : null);
   const invoke = (action: LifecycleCommand) => { void command(action).catch(operationError); };
   notifications = new DesktopNotifications(new NotificationStore(join(options.dataDir, "desktop-state.json")), nativeNotices, publish);

@@ -11,6 +11,10 @@ export type QuotaAvailability =
   | { status: "blocked"; reason: "quota_exhausted" | "reserve_reached" }
   | { status: "unknown"; reason: "unknown_quota" | "stale_quota" | "read_failed" | "identity_unknown" | "missing_window" };
 
+export function hasQuotaIdentity(account: QuotaSnapshot["account"]): account is NonNullable<QuotaSnapshot["account"]> {
+  return !!account && account.type === "chatgpt" && !!(account.email?.trim() || account.workspaceId?.trim());
+}
+
 export function evaluateQuota(snapshot: QuotaSnapshot, policy: QuotaPolicy, now: Date): QuotaAvailability {
   const age = now.getTime() - Date.parse(snapshot.fetchedAt);
   if (!Number.isFinite(age) || age < 0 || age > policy.quotaMaxAgeMs) return { status: "unknown", reason: "stale_quota" };

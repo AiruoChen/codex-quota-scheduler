@@ -84,6 +84,8 @@ try {
   await page.wait("document.getElementById('source')?.textContent.includes('MOCK')");
   await page.evaluate(`(async()=>{const csrf=(await(await fetch('/api/bootstrap')).json()).csrf;const response=await fetch('/api/action',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({action:'task-save',definition:{id:'original-desktop',name:'Original desktop fixture',enabled:true,projectDir:${JSON.stringify(artifacts)},priority:1,session:{mode:'new'}},prompt:'Synthetic original desktop data'})});if(!response.ok)throw new Error('Original fixture save failed')})()`);
   assert.equal(await page.evaluate("typeof window.desktopData"), "undefined");
+  assert.equal(await control.evaluate("typeof window.desktopData.openDirectory"), "function");
+  assert.equal(await control.evaluate("document.getElementById('data-open-directory')?.textContent"), "打开用户数据目录");
   assert.equal(await control.evaluate("typeof require"), "undefined");
   const appHash = await hash(executable);
   checkpoint = "running-upgrade-refused";

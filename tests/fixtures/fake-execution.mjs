@@ -13,6 +13,7 @@ record("spawn"); process.on("exit", () => record("exit"));
 assert.ok(process.argv.includes("app-server"));
 let initialized = false;
 let accountReads = 0;
+let quotaReads = 0;
 let cwd = value("--project") ?? process.cwd();
 let pendingApproval = false;
 const send = (message) => process.stdout.write(JSON.stringify(message) + "\n");
@@ -38,11 +39,16 @@ input.on("line", (line) => {
   assert.ok(initialized);
   if (message.method === "account/read") {
     accountReads++;
-    result({ account: { type: "chatgpt", email: scenario === "account-change" && accountReads > 1 ? "changed@example.test" : "user@example.test", planType: "plus" }, requiresOpenaiAuth: true });
+    result({ account: { type: "chatgpt", email: ["unknown-account", "workspace-account"].includes(scenario) ? null
+      : scenario === "account-change" && accountReads > 1 ? "changed@example.test" : "user@example.test",
+      ...(scenario === "workspace-account" ? { workspaceId: "fixture-workspace" } : {}), planType: "plus" }, requiresOpenaiAuth: true });
     return;
   }
   if (message.method === "account/rateLimits/read") {
-    result({ rateLimits: { limitId: "codex", primary: { usedPercent: scenario === "quota-wait" ? 100 : 10, windowDurationMins: 300, resetsAt: 2000000000 }, secondary: null } });
+    quotaReads++;
+    const resetsAt = scenario === "boundary-refresh" && quotaReads > 1 ? 2000003600 : 2000000000;
+    result({ rateLimits: { limitId: "codex", primary: { usedPercent: scenario === "quota-wait" || scenario === "quota-wait-after-refresh" && quotaReads > 1 ? 100 : 10,
+      windowDurationMins: 300, resetsAt }, secondary: scenario === "missing-weekly" ? null : { usedPercent: 10, windowDurationMins: 10080, resetsAt } } });
     return;
   }
   if (message.method === "thread/read") {

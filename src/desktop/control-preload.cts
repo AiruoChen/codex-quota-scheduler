@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld("desktopLifecycle", Object.freeze({
 }));
 contextBridge.exposeInMainWorld("desktopData", Object.freeze({
   read: (): Promise<DesktopDataView> => ipcRenderer.invoke("desktop-data:read"),
+  openDirectory: (): Promise<void> => ipcRenderer.invoke("desktop-data:open-directory"),
   action: (action: string, value?: string, confirmed = false): Promise<void> => ipcRenderer.invoke("desktop-data:action", action, value, confirmed),
   onFocus: (listener: () => void) => {
     const receive = () => listener(); ipcRenderer.on("desktop-data:focus", receive);

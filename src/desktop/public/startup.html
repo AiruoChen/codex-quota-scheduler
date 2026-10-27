@@ -26,6 +26,7 @@
   </section>
   <section id="data-management" aria-label="安装与数据迁移"><h2>安装与数据迁移</h2>
     <p id="data-location" class="paths"></p>
+    <button id="data-open-directory" type="button">打开用户数据目录</button>
     <p>备份、导入与切换前须停止后台。导入会创建新的数据副本，不合库、不覆盖旧项目；已有快照、审计和遗留执行权保持原样，导入后队列暂停。</p>
     <label><input id="data-confirm" type="checkbox">我已核对范围：停止会暂停派发并等待当前任务落盘；导入/切换不会自动执行；旧项目须保持停止，避免两份数据重复派发。</label>
     <div class="actions"><button data-transfer="stop">停止自有后台并等待落盘</button><button data-transfer="backup">创建完整数据备份</button><button data-transfer="preview">选择旧配置 / 备份并预检…</button></div>

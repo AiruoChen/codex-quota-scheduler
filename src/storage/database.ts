@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { AppError } from "../shared/errors.js";
+import { localProcesses } from "../shared/process.js";
 
 export const migrations = [
   `CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;
@@ -46,6 +47,7 @@ export const migrations = [
   `CREATE TABLE execution_origins (run_id TEXT PRIMARY KEY REFERENCES runs(id), data_json TEXT NOT NULL) STRICT;
    CREATE TABLE recovery_events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT REFERENCES runs(id), created_at TEXT NOT NULL, type TEXT NOT NULL, data_json TEXT NOT NULL) STRICT;
    CREATE INDEX recovery_events_by_run ON recovery_events(run_id, sequence);`,
+  `INSERT OR IGNORE INTO metadata VALUES ('database_identity',lower(hex(randomblob(16))));`,
 ];
 
 export class Database {
@@ -69,6 +71,13 @@ export class Database {
       this.transaction(() => {
         // Re-read under the write lock so concurrent initializers cannot run a migration twice.
         const current = Number(this.connection.prepare("PRAGMA user_version").get()?.user_version);
+        if (current > 0 && current < migrations.length) {
+          const owners = [current >= 3 ? this.connection.prepare("SELECT owner_pid FROM execution_lock").all() : [],
+            current >= 5 ? this.connection.prepare("SELECT owner_pid FROM scheduler_worker").all() : []].flat();
+          if (owners.some((owner) => localProcesses.inspect(Number(owner.owner_pid)) !== "dead")) {
+            throw new AppError("STORAGE_BUSY", "数据库模式升级前须安全停止活动进程；无法确认退出时保留原状态。");
+          }
+        }
         for (let index = current; index < migrations.length; index++) {
           this.connection.exec(migrations[index]!);
           this.connection.exec(`PRAGMA user_version=${index + 1}`);

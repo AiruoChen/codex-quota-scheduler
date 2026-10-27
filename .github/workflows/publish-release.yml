@@ -1,0 +1,79 @@
+name: Publish verified candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Successful CI push run ID whose candidate artifact should be published
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  validate:
+    if: github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    outputs:
+      artifact: ${{ steps.source.outputs.artifact }}
+      commit: ${{ steps.source.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+      - name: Check source workflow, conclusion and exact attempt
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_RUN_ID: ${{ inputs.run_id }}
+        run: node scripts/publish-release.mjs --run-id "$RELEASE_RUN_ID" --channel candidate --prepare yes
+      - name: Download the source run's candidate bundle
+        uses: actions/download-artifact@v6
+        with:
+          name: ${{ steps.source.outputs.artifact }}
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+          path: .release/incoming
+      - name: Verify source binding, every asset hash and the candidate gate
+        env:
+          RELEASE_COMMIT: ${{ steps.source.outputs.commit }}
+        run: node scripts/verify-release.mjs --directory .release/incoming --channel candidate --commit "$RELEASE_COMMIT"
+
+  publish:
+    needs: validate
+    if: github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    environment: release-publish
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+      - name: Download exact validated candidate artifact again
+        uses: actions/download-artifact@v6
+        with:
+          name: ${{ needs.validate.outputs.artifact }}
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+          path: .release/incoming
+      - name: Reverify before creating a GitHub Release
+        env:
+          RELEASE_COMMIT: ${{ needs.validate.outputs.commit }}
+        run: node scripts/verify-release.mjs --directory .release/incoming --channel candidate --commit "$RELEASE_COMMIT"
+      - name: Create draft, verify uploaded digests, then publish prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_RUN_ID: ${{ inputs.run_id }}
+        run: node scripts/publish-release.mjs --directory .release/incoming --run-id "$RELEASE_RUN_ID" --channel candidate

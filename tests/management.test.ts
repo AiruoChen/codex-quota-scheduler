@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { request } from "node:http";
+import { connect } from "node:net";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -73,6 +74,43 @@ test("管理状态保留缺失窗口、回退边界及未知账户的保守判�
   } finally { await env.cleanup(); }
 });
 
+test("GUI 仅提供白名单浏览器模块，不能读取服务端模块或源码映射", async () => {
+  const env = await setup();
+  try {
+    const modules = (await import("../src/management/gui-assets.js")).browserModules;
+    for (const name of modules) {
+      const response = await fetch(env.server.url + `/gui/${name}.js`);
+      assert.equal(response.status, 200); assert.match(response.headers.get("content-type") ?? "", /javascript/);
+    }
+    for (const path of ["/gui/service.js", "/gui/app.js.map", "/gui/../service.js", "/contracts.js", "/app.js"]) {
+      assert.equal((await fetch(env.server.url + path, { headers: { cookie: env.cookie } })).status, 404);
+    }
+    assert.equal((await env.action("sample")).status, 200);
+    assert.equal((await env.service.state()).loop, "monitor");
+  } finally { await env.cleanup(); }
+});
+
+test("脱敏诊断只经管理会话导出白名单状态，不包含账户、配置路径或任务正文", async () => {
+  const env = await setup("codex");
+  try {
+    const save = await env.action("task-save", { definition: { id: "private-id", name: "PRIVATE_TASK_NAME", enabled: true,
+      projectDir: env.dir, priority: 1, session: { mode: "new" } }, prompt: "PRIVATE_PROMPT_CONTENT" });
+    assert.equal(save.status, 200);
+    const denied = await fetch(env.server.url + "/api/diagnostics");
+    assert.equal(denied.status, 403);
+    const report = await env.get("/api/diagnostics");
+    assert.equal(report.format, 1);
+    assert.deepEqual(Object.keys(report), ["format", "createdAt", "environment", "provider", "service", "quota", "scheduler", "recovery"]);
+    assert.equal(report.provider, "codex");
+    assert.equal((report.scheduler as { paused: boolean }).paused, true);
+    const exported = JSON.stringify(report);
+    for (const secret of [env.dir, env.configPath, env.trace, "PRIVATE_TASK_NAME", "PRIVATE_PROMPT_CONTENT", "private-id",
+      "test-secret", "fixture@example.test", "executable", "databasePath", "promptSnapshot", "runtime.log"]) {
+      assert.equal(exported.includes(secret), false, `诊断泄露 ${secret}`);
+    }
+  } finally { await env.cleanup(); }
+});
+
 test("同一时刻的两个手动请求只登记一个后台操作", async () => {
   const env = await setup("codex", "hang");
   try {
@@ -132,7 +170,7 @@ test("HTTP 仅允许本机 Host、同源会话和 CSRF；静态资源不暴露�
     assert.equal((await fetch(env.server.url + "/api/runtime", { headers: { cookie: env.cookie } })).status, 403);
     const large = await env.action("task-save", { prompt: "a".repeat(520 * 1024) });
     assert.equal(large.status, 413);
-    assert.equal((await fetch(env.server.url + "/app.js")).status, 200);
+    assert.equal((await fetch(env.server.url + "/gui/app.js")).status, 200);
   } finally { await env.cleanup(); }
 });
 
@@ -220,6 +258,12 @@ test("浏览器断开不取消手动执行；取消请求等待远端终止后�
       runId = (await env.service.state()).jobs.find((item) => item.id === job.id)?.runId ?? "";
       return !!runId && !!(await (await env.service.app.storage()).runs.get(runId))?.turnId;
     });
+    const current = (await env.service.state()).currentRun;
+    assert.equal(current?.id, runId);
+    assert.equal(current?.name, "One");
+    assert.ok(current && !Object.hasOwn(current, "promptSnapshot") && !Object.hasOwn(current, "output"));
+    const detail = await env.get(`/api/run?id=${runId}`) as { origin: { account: string; cliVersion: string } };
+    assert.match(detail.origin.account, /\*\*\*@/); assert.equal(typeof detail.origin.cliVersion, "string");
     const cancelling = await (await env.action("cancel", { id: runId })).json() as { run: TaskRun; cancelRequested: boolean };
     assert.equal(cancelling.run.status, "running"); assert.equal(cancelling.cancelRequested, true);
     await until(async () => (await (await env.service.app.storage()).runs.get(runId))?.status === "cancelled");
@@ -274,5 +318,131 @@ test("服务停止等待已提交任务核对；没有终止确认时保留 need
       assert.equal((await store.runs.get(runId))?.status, "needs_attention");
       assert.equal(store.execution.events(runId).filter((event) => event.type === "submission_started").length, 1);
     } finally { store.close(); }
+  } finally { await env.cleanup(); }
+});
+
+test("等待式退出拒绝新任务但保留当前执行，完成并落盘后才停止", async () => {
+  const env = await setup("codex", "slow-success");
+  try {
+    await env.task();
+    const job = await (await env.action("run", { id: "one" })).json() as { id: number };
+    let runId = "";
+    await until(async () => {
+      runId = (await env.service.state()).jobs.find((item) => item.id === job.id)?.runId ?? "";
+      return !!runId && !!(await (await env.service.app.storage()).runs.get(runId))?.turnId;
+    });
+    const stopping = env.server.close("wait");
+    const status = await (await fetch(env.server.url + "/api/runtime", { headers: { Authorization: "Bearer test-secret",
+      "X-Runtime-Instance": "01234567-abcd-1234-abcd-0123456789ab" } })).json() as { stopping: boolean; activeOperations: number; shutdownMode: string };
+    assert.equal(status.stopping, true); assert.equal(status.shutdownMode, "wait"); assert.ok(status.activeOperations > 0);
+    assert.equal((await env.action("run", { id: "one" })).status, 409);
+    assert.equal((await (await env.service.app.storage()).runs.get(runId))?.status, "running");
+    await stopping;
+    const store = new SqliteStore(env.config.storage.databasePath);
+    try { assert.equal((await store.runs.get(runId))?.status, "succeeded"); } finally { store.close(); }
+    const trace = await readFile(env.trace, "utf8");
+    assert.ok(!trace.includes('"method":"turn/interrupt"'));
+    assert.equal(trace.split('"method":"turn/start"').length - 1, 1);
+  } finally { await env.cleanup(); }
+});
+
+test("等待式停止期间控制接口可显式升级取消，并等待终止确认", async () => {
+  const env = await setup("codex", "hang");
+  try {
+    await env.task();
+    const job = await (await env.action("run", { id: "one" })).json() as { id: number };
+    let runId = "";
+    await until(async () => {
+      runId = (await env.service.state()).jobs.find((item) => item.id === job.id)?.runId ?? "";
+      return !!runId && !!(await (await env.service.app.storage()).runs.get(runId))?.turnId;
+    });
+    const stopping = env.server.close("wait");
+    const response = await fetch(env.server.url + "/api/runtime/stop?mode=cancel", { method: "POST", headers: {
+      Authorization: "Bearer test-secret", "X-Runtime-Instance": "01234567-abcd-1234-abcd-0123456789ab" } });
+    assert.equal(response.status, 202);
+    await stopping;
+    const store = new SqliteStore(env.config.storage.databasePath);
+    try {
+      assert.equal((await store.runs.get(runId))?.status, "cancelled");
+      assert.ok(store.execution.events(runId).some((event) => event.type === "turn/completed"));
+    } finally { store.close(); }
+  } finally { await env.cleanup(); }
+});
+
+test("调度等待式退出先暂停派发，当前任务完成后不领取下一项", async () => {
+  const env = await setup("codex", "slow-success");
+  try {
+    await env.task("first snapshot");
+    const first = await (await env.action("enqueue", { id: "one" })).json() as TaskRun;
+    await env.task("second snapshot", 1);
+    const second = await (await env.action("enqueue", { id: "one" })).json() as TaskRun;
+    await env.action("scheduler-start");
+    await until(async () => !!(await env.service.state()).scheduler.worker);
+    await env.action("resume");
+    await until(async () => !!(await (await env.service.app.storage()).runs.get(first.id))?.turnId);
+    await env.server.close("wait");
+    const store = new SqliteStore(env.config.storage.databasePath);
+    try {
+      assert.equal((await store.runs.get(first.id))?.status, "succeeded");
+      assert.equal((await store.runs.get(second.id))?.status, "queued");
+      assert.equal(store.execution.events(second.id).filter((event) => event.type === "submission_started").length, 0);
+    } finally { store.close(); }
+    assert.ok(!(await readFile(env.trace, "utf8")).includes('"method":"turn/interrupt"'));
+  } finally { await env.cleanup(); }
+});
+
+test("浏览器只建立连接而不发请求时，服务仍可在排空后安全停止", async () => {
+  const env = await setup();
+  const socket = connect(Number(new URL(env.server.url).port), "127.0.0.1");
+  try {
+    await new Promise<void>((done, reject) => { socket.once("connect", done); socket.once("error", reject); });
+    await Promise.race([env.server.close("wait"), delay(2000, undefined, { ref: false }).then(() => { throw new Error("Idle preconnect blocked shutdown"); })]);
+  } finally { socket.destroy(); await env.cleanup(); }
+});
+
+test("任务启停与入队均检查 revision，页面分页不暴露指令", async () => {
+  const env = await setup();
+  try {
+    await env.task("private page prompt");
+    const page = await env.get("/api/tasks/page?search=One&enabled=enabled&limit=1");
+    assert.equal(page.total, 1); assert.ok(!JSON.stringify(page).includes("private page prompt"));
+    assert.equal((await env.action("task-enable", { id: "one", revision: 1, enabled: false })).status, 200);
+    assert.equal((await env.action("task-enable", { id: "one", revision: 1, enabled: true })).status, 409);
+    assert.equal((await env.action("enqueue", { id: "one", revision: 1 })).status, 409);
+    assert.equal((await env.action("enqueue", { id: "one", revision: 2 })).status, 400);
+    assert.equal((await env.action("task-enable", { id: "one", revision: 2, enabled: true })).status, 200);
+    const queued = await (await env.action("enqueue", { id: "one", revision: 3 })).json() as TaskRun;
+    assert.equal(queued.taskRevision, 3); assert.equal(queued.promptSnapshot, "private page prompt");
+    assert.equal((await env.get("/api/tasks/page?enabled=disabled")).total, 0);
+    assert.equal((await fetch(env.server.url + "/api/tasks/page?offset=-1", { headers: { cookie: env.cookie } })).status, 400);
+  } finally { await env.cleanup(); }
+});
+
+test("运行分页按状态/项目筛选并保留历史版本，不返回正文和输出", async () => {
+  const env = await setup();
+  try {
+    await env.task("private run prompt");
+    const run = await (await env.action("enqueue", { id: "one", revision: 1 })).json() as TaskRun;
+    const page = await env.get("/api/runs/page?search=One&status=queued&limit=1");
+    assert.equal(page.total, 1); assert.ok(!JSON.stringify(page).includes("private run prompt"));
+    await env.action("cancel", { id: run.id });
+    assert.equal((await env.get("/api/runs/page?status=cancelled")).total, 1);
+    assert.equal((await env.get("/api/runs/page?status=queued")).total, 0);
+    assert.equal((await fetch(env.server.url + "/api/runs/page?status=not-a-status", { headers: { cookie: env.cookie } })).status, 400);
+    assert.equal((await env.get(`/api/run?id=${run.id}`)).origin, null);
+  } finally { await env.cleanup(); }
+});
+
+test("托盘后台接口校验控制密钥与实例；暂停不停止服务或当前操作，事件不暴露正文", async () => {
+  const env = await setup();
+  try {
+    for (const path of ["/api/runtime/desktop", "/api/runtime/pause"]) assert.equal((await fetch(env.server.url + path, { method: path.endsWith("pause") ? "POST" : "GET", headers: { cookie: env.cookie, "X-CSRF-Token": env.csrf } })).status, 403);
+    const headers = { Authorization: "Bearer test-secret", "X-Runtime-Instance": "01234567-abcd-1234-abcd-0123456789ab" };
+    const response = await fetch(env.server.url + "/api/runtime/desktop", { headers }); assert.equal(response.status, 200);
+    const text = await response.text(); assert.ok(!text.includes(env.dir)); assert.ok(!text.includes("test-secret"));
+    assert.equal((await fetch(env.server.url + "/api/runtime/desktop?execution=-1", { headers })).status, 400);
+    (await env.service.app.scheduling()).repository.resume(); assert.equal((await env.service.state()).scheduler.paused, false);
+    assert.equal((await fetch(env.server.url + "/api/runtime/pause", { method: "POST", headers })).status, 200);
+    assert.equal((await env.service.state()).scheduler.paused, true); assert.equal((await env.service.state()).loop, "monitor");
   } finally { await env.cleanup(); }
 });

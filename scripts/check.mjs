@@ -34,4 +34,17 @@ for (const directory of ["src/domain", "src/scheduler"]) {
     visit(source);
   }
 }
-console.log("JavaScript syntax and domain/scheduler module boundaries checked.");
+// Browser runtime imports stay inside the GUI. Backend contracts are imported only as types.
+for (const file of await readdir("src/management/gui")) {
+  if (!file.endsWith(".ts")) continue;
+  const source = ts.createSourceFile(file, await readFile(join("src/management/gui", file), "utf8"), ts.ScriptTarget.Latest, true);
+  function visit(node) {
+    if (ts.isImportDeclaration(node) && !node.importClause?.isTypeOnly) {
+      if (!ts.isStringLiteral(node.moduleSpecifier) || !/^\.\/[a-z-]+\.js$/.test(node.moduleSpecifier.text)) throw new Error(`Invalid browser runtime import: ${file}`);
+    }
+    if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) throw new Error(`Dynamic browser import is not allowed: ${file}`);
+    ts.forEachChild(node, visit);
+  }
+  visit(source);
+}
+console.log("JavaScript syntax, domain/scheduler and browser module boundaries checked.");

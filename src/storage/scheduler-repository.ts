@@ -3,7 +3,7 @@ import type { Clock } from "../domain/ports.js";
 import type { MonitorUpdate } from "../domain/monitor.js";
 import type { DispatchDecision, SchedulerRepository, SchedulerStatus, SchedulerTrigger } from "../domain/scheduler.js";
 import type { TaskRun } from "../domain/task.js";
-import { evaluateQuota } from "../domain/quota-policy.js";
+import { evaluateQuota, hasQuotaIdentity } from "../domain/quota-policy.js";
 import { digest, type MonitorOptions } from "../monitor/recognize.js";
 import { AppError } from "../shared/errors.js";
 import type { Database } from "./database.js";
@@ -23,11 +23,12 @@ export class SqliteSchedulerRepository implements SchedulerRepository {
     this.db.transaction(() => { this.db.connection.prepare("INSERT OR IGNORE INTO scheduler_control VALUES (1,1,'not_enabled',?)").run(clock.now().toISOString()); });
   }
 
-  enqueue(taskId: string): TaskRun {
+  enqueue(taskId: string, expectedRevision?: number): TaskRun {
     return this.db.transaction(() => {
       const row = this.db.connection.prepare("SELECT * FROM tasks WHERE id=? AND deleted_at IS NULL").get(taskId);
       if (!row) throw new AppError("TASK_NOT_FOUND", "任务不存在或已归档。");
       const task = readStoredTask(row);
+      if (expectedRevision !== undefined && task.revision !== expectedRevision) throw new AppError("TASK_CONFLICT", "预览后任务版本已变化，请重新预览再入队。");
       const existing = this.db.connection.prepare("SELECT run_id FROM scheduler_queue WHERE task_id=? AND task_revision=?").get(taskId, task.revision);
       if (existing) return this.run(String(existing.run_id));
       if (!task.enabled) throw new AppError("TASK_DISABLED", "停用任务不能加入自动队列。");
@@ -60,7 +61,13 @@ export class SqliteSchedulerRepository implements SchedulerRepository {
     const worker = this.db.connection.prepare("SELECT * FROM scheduler_worker WHERE singleton=1").get();
     return { paused: control.paused === 1, reason: control.reason === null ? null : String(control.reason),
       worker: worker ? { pid: Number(worker.owner_pid), startedAt: String(worker.started_at), trigger: worker.trigger_mode as SchedulerTrigger } : null,
-      attention: this.attention(), queue: this.queued().map((run) => ({ runId: run.id, taskId: run.taskId, revision: run.taskRevision, status: run.status, priority: run.taskSnapshot.priority })) };
+      attention: this.attention(), queue: this.db.connection.prepare(`SELECT r.data_json,q.sequence,t.definition_json,t.deleted_at
+        FROM scheduler_queue q JOIN runs r ON r.id=q.run_id LEFT JOIN tasks t ON t.id=q.task_id ORDER BY q.sequence`).all().map((row) => {
+        const run = readRun(row.data_json);
+        return { runId: run.id, taskId: run.taskId, revision: run.taskRevision, status: run.status, priority: run.taskSnapshot.priority,
+          name: run.taskSnapshot.name, projectDir: run.taskSnapshot.projectDir, createdAt: run.createdAt, sequence: Number(row.sequence),
+          enabled: row.definition_json && row.deleted_at === null ? (JSON.parse(String(row.definition_json)) as { enabled: boolean }).enabled : null };
+      }) };
   }
 
   pause(reason = "user_paused"): void {
@@ -142,7 +149,7 @@ export class SqliteSchedulerRepository implements SchedulerRepository {
       if (state.errorCode || state.availability.status !== "available") return { action: "wait", reason: state.availability.reason };
       const eligibility = evaluateQuota(snapshot, this.policy, this.clock.now());
       if (eligibility.status !== "available") return { action: "wait", reason: eligibility.reason };
-      if (!state.identity || !snapshot.account || !snapshot.account.email && !snapshot.account.workspaceId) return { action: "wait", reason: "identity_unknown" };
+      if (!state.identity || !hasQuotaIdentity(snapshot.account)) return { action: "wait", reason: "identity_unknown" };
       if (this.trigger === "refresh" && !grant) return { action: "wait", reason: "awaiting_refresh" };
       const candidates = this.queued().filter((run) => ["queued", "waiting_quota"].includes(run.status))
         .sort((a, b) => b.taskSnapshot.priority - a.taskSnapshot.priority);

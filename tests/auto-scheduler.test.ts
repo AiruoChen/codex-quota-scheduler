@@ -17,6 +17,7 @@ import { SchedulerService } from "../src/scheduler/service.js";
 import { SqliteMonitorRepository } from "../src/storage/monitor-repository.js";
 import { SqliteSchedulerRepository } from "../src/storage/scheduler-repository.js";
 import { SqliteStore } from "../src/storage/sqlite-store.js";
+import { quotaStreamKey } from "../src/monitor/context.js";
 
 const epoch = Date.parse("2026-10-20T00:00:00Z");
 async function setup(trigger: SchedulerTrigger = "available", scenario = "success") {
@@ -29,8 +30,8 @@ async function setup(trigger: SchedulerTrigger = "available", scenario = "succes
   let time = epoch;
   const clock = { now: () => new Date(time) };
   const store = new SqliteStore(config.storage.databasePath, clock);
-  const monitorRepo = new SqliteMonitorRepository(store.database, "test-stream", config, clock);
-  const repo = new SqliteSchedulerRepository(store.database, "test-stream", trigger, config, clock);
+  const monitorRepo = new SqliteMonitorRepository(store.database, quotaStreamKey(config), config, clock);
+  const repo = new SqliteSchedulerRepository(store.database, quotaStreamKey(config), trigger, config, clock);
   function quota(used = 10, weekly = 10, reset = epoch + 3600000): QuotaSnapshot {
     return { ...normalizeQuota({ rateLimitsByLimitId: { codex: {
       primary: { usedPercent: used, windowDurationMins: 300, resetsAt: reset / 1000 },
@@ -160,7 +161,7 @@ test("刷新模式不消费启动前的旧刷新，周额度阻塞时保留新�
     env.repo.release(token);
     const other = new SqliteStore(env.config.storage.databasePath, env.clock);
     try {
-      const restarted = new SqliteSchedulerRepository(other.database, "test-stream", "refresh", env.config, env.clock);
+      const restarted = new SqliteSchedulerRepository(other.database, quotaStreamKey(env.config), "refresh", env.config, env.clock);
       const secondToken = restarted.acquire();
       assert.deepEqual(restarted.claimNext(secondToken, update), { action: "wait", reason: "refresh_consumed" }); restarted.release(secondToken);
     } finally { other.close(); }
@@ -219,7 +220,7 @@ test("调度进程互斥且与手动执行共享执行权；同一执行权只�
     await env.add("one"); await env.add("manual"); env.repo.enqueue("one"); env.repo.resume(); const token = env.repo.acquire();
     const second = new SqliteStore(env.config.storage.databasePath, env.clock);
     try {
-      const other = new SqliteSchedulerRepository(second.database, "test-stream", "available", env.config, env.clock);
+      const other = new SqliteSchedulerRepository(second.database, quotaStreamKey(env.config), "available", env.config, env.clock);
       assert.throws(() => other.acquire(), { code: "SCHEDULER_BUSY" });
       const manual = env.store.execution.claimNew("manual");
       const update = env.monitorRepo.record({ snapshot: env.quota() });
@@ -306,7 +307,7 @@ test("另一连接暂停后不领取下一项，停止调度会中断当前任�
       await delay(25);
     }
     assert.equal(submitted, true);
-    const second = new SqliteSchedulerRepository(other.database, "test-stream", "available", env.config, env.clock);
+    const second = new SqliteSchedulerRepository(other.database, quotaStreamKey(env.config), "available", env.config, env.clock);
     second.pause(); controller.abort(); await pending;
     assert.equal((await env.store.runs.get(first.id))?.status, "cancelled");
     assert.equal(env.repo.status().queue.find((entry) => entry.taskId === "two")?.status, "queued");

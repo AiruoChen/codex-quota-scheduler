@@ -1,0 +1,14 @@
+{
+  "format": 1,
+  "version": "0.3.0",
+  "commit": "0000000000000000000000000000000000000000",
+  "installerSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "checks": [
+    { "id": "clean_windows", "status": "pending", "method": "human_observed", "observedAt": "1970-01-01T00:00:00.000Z", "reviewer": "pending" },
+    { "id": "real_account", "status": "pending", "method": "real_account", "observedAt": "1970-01-01T00:00:00.000Z", "reviewer": "pending" },
+    { "id": "native_notifications", "status": "pending", "method": "human_observed", "observedAt": "1970-01-01T00:00:00.000Z", "reviewer": "pending" },
+    { "id": "display_scaling", "status": "pending", "method": "human_observed", "observedAt": "1970-01-01T00:00:00.000Z", "reviewer": "pending" },
+    { "id": "fault_recovery", "status": "pending", "method": "human_observed", "observedAt": "1970-01-01T00:00:00.000Z", "reviewer": "pending" },
+    { "id": "p0_walkthrough", "status": "pending", "method": "human_observed", "observedAt": "1970-01-01T00:00:00.000Z", "reviewer": "pending" }
+  ]
+}

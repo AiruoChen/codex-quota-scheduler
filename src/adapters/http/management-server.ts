@@ -5,24 +5,37 @@ import { ConfigManager } from "../../config/manage.js";
 import { AppError } from "../../shared/errors.js";
 import { ManagementService } from "../../management/service.js";
 import type { RuntimeLogger } from "../../runtime/log.js";
+import type { ShutdownMode } from "../../domain/lifecycle.js";
+import { browserModules } from "../../management/gui-assets.js";
+import { maskAccount } from "../../management/quota-display.js";
+import { readFeedRequest } from "./desktop-protocol.js";
 
 export interface ServerOptions {
   port: number;
   instance: string;
   controlToken: string;
   logger: RuntimeLogger;
-  onStop(): void;
+  onStop(mode?: ShutdownMode): void;
 }
 
 export async function serveManagement(service: ManagementService, options: ServerOptions) {
   const csrf = randomBytes(32).toString("hex");
   const cookie = `cqs_${options.instance.slice(0, 12)}=${randomBytes(32).toString("hex")}`;
-  const assets = new Map(await Promise.all(["index.html", "app.js", "style.css"].map(async (name) =>
-    [name, await readFile(new URL(`../../management/public/${name}`, import.meta.url))] as const)));
+  const assets = new Map(await Promise.all([
+    ...["index.html", "style.css"].map(async (name) => [name, await readFile(new URL(`../../management/public/${name}`, import.meta.url))] as const),
+    ...browserModules.map(async (name) => [`gui/${name}.js`, await readFile(new URL(`../../management/gui/${name}.js`, import.meta.url))] as const),
+  ]));
   let origin = "";
   let stopping = false;
+  let shutdownMode: ShutdownMode | null = null;
   let closePromise: Promise<void> | undefined;
-  const server = createServer((request, response) => { void handle(request, response); });
+  const requests = new Set<Promise<void>>();
+  const server = createServer((request, response) => {
+    const flushed = new Promise<void>((done) => { response.once("finish", done); response.once("close", done); });
+    const handling = handle(request, response).then(() => flushed).finally(() => { requests.delete(handling); });
+    requests.add(handling);
+    void handling.catch(() => {});
+  });
   server.requestTimeout = 15000;
   server.headersTimeout = 10000;
   server.keepAliveTimeout = 1000;
@@ -43,13 +56,23 @@ export async function serveManagement(service: ManagementService, options: Serve
       const url = new URL(request.url ?? "/", origin);
       if (url.origin !== origin) throw new AppError("HTTP_FORBIDDEN", "请求地址不匹配。");
       const path = url.pathname;
-      if (path === "/api/runtime" || path === "/api/runtime/stop") {
+      if (["/api/runtime", "/api/runtime/stop", "/api/runtime/desktop", "/api/runtime/pause"].includes(path)) {
         if (!equal(request.headers.authorization, `Bearer ${options.controlToken}`)
           || request.headers["x-runtime-instance"] !== options.instance) throw new AppError("HTTP_FORBIDDEN", "运行实例不匹配。");
-        if (path === "/api/runtime" && request.method === "GET") return reply(response, 200, { instance: options.instance, pid: process.pid, stopping });
+        if (path === "/api/runtime" && request.method === "GET") return reply(response, 200, { instance: options.instance, pid: process.pid, stopping, shutdownMode, ...service.activity() });
+        if (path === "/api/runtime/desktop" && request.method === "GET") return reply(response, 200, { instance: options.instance, pid: process.pid,
+          feed: await service.desktopFeed(readFeedRequest(url.searchParams)) });
+        if (path === "/api/runtime/pause" && request.method === "POST") {
+          await service.action("pause", {});
+          return reply(response, 200, { instance: options.instance, pid: process.pid, paused: true });
+        }
         if (path === "/api/runtime/stop" && request.method === "POST") {
+          const mode = url.searchParams.get("mode") ?? "cancel";
+          if (mode !== "wait" && mode !== "cancel") throw new AppError("INVALID_ARGUMENT", "未知停止方式。");
+          if (shutdownMode !== "cancel") shutdownMode = mode;
+          service.beginShutdown(shutdownMode);
           reply(response, 202, { instance: options.instance, pid: process.pid, stopping: true });
-          if (!stopping) { stopping = true; service.beginShutdown(); setImmediate(options.onStop); }
+          if (!stopping) { stopping = true; setImmediate(() => options.onStop(shutdownMode!)); }
           return;
         }
         throw new AppError("HTTP_NOT_FOUND", "接口不存在。");
@@ -67,6 +90,9 @@ export async function serveManagement(service: ManagementService, options: Serve
         if (path === "/api/bootstrap") return reply(response, 200, { csrf });
         if (path === "/api/state") return reply(response, 200, await service.state());
         if (path === "/api/tasks") return reply(response, 200, await service.tasks());
+        if (path === "/api/tasks/page") return reply(response, 200, await store.tasks.query({ search: url.searchParams.get("search") ?? "",
+          enabled: (url.searchParams.get("enabled") ?? "all") as "all" | "enabled" | "disabled",
+          offset: Number(url.searchParams.get("offset") ?? 0), limit: Number(url.searchParams.get("limit") ?? 25) }));
         if (path === "/api/task") {
           const task = await store.tasks.get(id);
           if (!task) throw new AppError("TASK_NOT_FOUND", "任务不存在或已归档。");
@@ -76,12 +102,18 @@ export async function serveManagement(service: ManagementService, options: Serve
           const runs = await store.runs.recent(50, Number(url.searchParams.get("offset") ?? 0));
           return reply(response, 200, runs.map(({ promptSnapshot: _prompt, output: _output, taskSnapshot, ...run }) => ({ ...run, name: taskSnapshot.name })));
         }
+        if (path === "/api/runs/page") return reply(response, 200, await store.runs.query({ search: url.searchParams.get("search") ?? "",
+          status: (url.searchParams.get("status") ?? "all") as import("../../domain/task.js").RunQuery["status"],
+          offset: Number(url.searchParams.get("offset") ?? 0), limit: Number(url.searchParams.get("limit") ?? 25) }));
         if (path === "/api/run") {
-          const run = await store.runs.get(id);
-          if (!run) throw new AppError("RUN_NOT_FOUND", "运行记录不存在。");
-          return reply(response, 200, { run, events: store.execution.events(id), recovery: (await service.recovery()).repository.events(id) });
+          const recovery = (await service.recovery()).repository;
+          const target = recovery.target(id);
+          return reply(response, 200, { run: target.run, events: store.execution.events(id), recovery: recovery.events(id),
+            cancelRequested: store.execution.cancelled(id),
+            origin: target.origin ? { account: maskAccount(target.origin.account.email), cliVersion: target.origin.cliVersion } : null });
         }
         if (path === "/api/config") return reply(response, 200, { active: service.config, saved: await new ConfigManager(service.configPath).show() });
+        if (path === "/api/diagnostics") return reply(response, 200, await service.diagnostics());
         if (path === "/api/logs") return reply(response, 200, { text: options.logger.tail() });
       }
       if (request.method === "POST" && path === "/api/action") {
@@ -114,13 +146,22 @@ export async function serveManagement(service: ManagementService, options: Serve
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("Missing server address");
   origin = `http://127.0.0.1:${address.port}`;
-  return { url: origin, close(): Promise<void> {
+  return { url: origin, close(mode: ShutdownMode = "cancel"): Promise<void> {
+    service.beginShutdown(mode);
+    if (shutdownMode !== "cancel") shutdownMode = mode;
     closePromise ??= (async () => {
       stopping = true;
-      service.beginShutdown();
+      // Keep authenticated status/stop available while waiting; writes are already rejected.
+      await service.prepareStop(mode);
       // Stop accepting work before waiting for cancellation and durable finalization.
       const drained = new Promise<void>((resolve, reject) => { server.close((error) => error ? reject(error) : resolve()); server.closeIdleConnections(); });
-      try { await drained; } finally { await service.close(); }
+      // Browser preconnect sockets may never send headers. Drain handlers and response writes first,
+      // then close the remaining HTTP connections without truncating in-flight persistence work.
+      try {
+        while (requests.size) await Promise.allSettled([...requests]);
+        server.closeAllConnections();
+        await drained;
+      } finally { await service.close(mode); }
     })();
     return closePromise;
   } };

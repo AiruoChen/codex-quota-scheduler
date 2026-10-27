@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { isAbsolute } from "node:path";
 import type { Clock, TaskRepository } from "../domain/ports.js";
-import type { StoredTask, TaskDefinition, TaskRevision } from "../domain/task.js";
+import type { StoredTask, TaskDefinition, TaskRevision, TaskQuery, TaskPage } from "../domain/task.js";
 import { AppError } from "../shared/errors.js";
 import { parseTask } from "../tasks/load.js";
 import type { Database } from "./database.js";
@@ -29,6 +29,20 @@ export class SqliteTaskRepository implements TaskRepository {
 
   async list(): Promise<StoredTask[]> {
     return this.db.connection.prepare("SELECT * FROM tasks WHERE deleted_at IS NULL ORDER BY id").all().map(readStoredTask);
+  }
+
+  async query(query: TaskQuery): Promise<TaskPage> {
+    if (!Number.isSafeInteger(query.offset) || query.offset < 0 || !Number.isSafeInteger(query.limit) || query.limit < 1 || query.limit > 100
+      || query.search.length > 200 || !["all", "enabled", "disabled"].includes(query.enabled)) throw new AppError("INVALID_ARGUMENT", "任务筛选或分页参数无效。");
+    const where = `deleted_at IS NULL AND (?='all' OR json_extract(definition_json,'$.enabled')=?)
+      AND (instr(lower(id),lower(?))>0 OR instr(lower(json_extract(definition_json,'$.name')),lower(?))>0
+        OR instr(lower(json_extract(definition_json,'$.projectDir')),lower(?))>0)`;
+    const params = [query.enabled, query.enabled === "enabled" ? 1 : 0, query.search, query.search, query.search];
+    return this.db.transaction(() => ({
+      ...query, total: Number(this.db.connection.prepare(`SELECT count(*) AS n FROM tasks WHERE ${where}`).get(...params)!.n),
+      items: this.db.connection.prepare(`SELECT * FROM tasks WHERE ${where} ORDER BY id LIMIT ? OFFSET ?`).all(...params, query.limit, query.offset)
+        .map((row) => { const { promptSnapshot: _prompt, ...task } = readStoredTask(row); return task; }),
+    }));
   }
 
   async get(id: string): Promise<StoredTask | null> {

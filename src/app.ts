@@ -10,9 +10,7 @@ import { ManualExecutionService } from "./executor/manual-service.js";
 import { AppServerQuotaFeed } from "./adapters/codex/quota-feed.js";
 import { ContinuousQuotaMonitor } from "./monitor/continuous-monitor.js";
 import { SqliteMonitorRepository } from "./storage/monitor-repository.js";
-import { digest } from "./monitor/recognize.js";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { quotaStreamKey } from "./monitor/context.js";
 import { SchedulerService } from "./scheduler/service.js";
 import { SqliteSchedulerRepository } from "./storage/scheduler-repository.js";
 import { SqliteRecoveryRepository } from "./storage/recovery-repository.js";
@@ -22,8 +20,7 @@ import { RecoveryService } from "./recovery/service.js";
 export function createApp(config: AppConfig, clock: Clock = systemClock) {
   const provider = config.provider === "mock" ? new MockQuotaProvider(clock) : new AppServerQuotaProvider(config.codex, clock);
   const monitor = new QuotaMonitor(provider);
-  const streamKey = digest([config.provider, config.limitId, config.reservePercent, config.quotaMaxAgeMs,
-    config.provider === "codex" ? [config.codex.executable, config.codex.args, config.codex.home ?? process.env.CODEX_HOME ?? join(homedir(), ".codex")] : null]);
+  const streamKey = quotaStreamKey(config);
   let store: SqliteStore | undefined;
   let opening: Promise<SqliteStore> | undefined;
   let closed = false;

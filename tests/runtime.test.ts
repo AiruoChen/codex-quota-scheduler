@@ -174,7 +174,7 @@ test("便携包装只包含运行所需文件，无运行依赖；在其他工�
     assert.equal((JSON.parse(output) as { mode: string }).mode, "preview_only");
     const started = JSON.parse(execFileSync(process.execPath, ["--experimental-sqlite", entry, "service", "start", "--config", env.configPath, "--port", "0"], { cwd: env.dir, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], timeout: 20000 })) as { url: string };
     assert.equal((await fetch(started.url)).status, 200);
-    assert.equal((await fetch(started.url + "/app.js")).status, 200);
+    assert.equal((await fetch(started.url + "/gui/app.js")).status, 200);
     assert.equal(command(env.configPath, "service", "stop").stopped, true);
   } finally {
     try { command(env.configPath, "service", "stop"); } finally { await rm(env.dir, { recursive: true, force: true }); }

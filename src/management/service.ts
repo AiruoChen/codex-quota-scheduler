@@ -6,6 +6,14 @@ import { systemClock, type Clock } from "../domain/ports.js";
 import { AppError } from "../shared/errors.js";
 import { isRecord, requireRecord, requireString } from "../shared/validation.js";
 import { parseTask } from "../tasks/load.js";
+import type { RuntimeActivity, ShutdownMode } from "../domain/lifecycle.js";
+import type { SchedulerRepository } from "../domain/scheduler.js";
+import type { ExecutionRepository } from "../storage/execution-repository.js";
+import { setTimeout as delay } from "node:timers/promises";
+import { quotaDisplay } from "./quota-display.js";
+import { desktopEvents } from "../storage/desktop-feed.js";
+import { digest } from "../monitor/recognize.js";
+import type { FeedRequest, DesktopFeed } from "../domain/notifications.js";
 
 export interface ManagementJob {
   id: number;
@@ -26,8 +34,14 @@ export class ManagementService {
   private sequence = 0;
   private changingLoop = false;
   private closing = false;
+  private closed = false;
   private closePromise: Promise<void> | undefined;
+  private settlePromise: Promise<void> | undefined;
+  private shutdownMode: ShutdownMode | null = null;
+  private schedulerRepository: SchedulerRepository | undefined;
+  private executionRepository: ExecutionRepository | undefined;
   private recoveryPromise: ReturnType<ReturnType<typeof createApp>["recovery"]> | undefined;
+  private dispatch: { reason: string | null; event: string; observedAt: string } | null = null;
 
   constructor(readonly config: AppConfig, readonly configPath: string, private readonly log: RuntimeLog = () => {},
     private readonly clock: Clock = systemClock) { this.app = createApp(config, clock); }
@@ -36,6 +50,8 @@ export class ManagementService {
     await this.app.taskService();
     const recovery = await this.recovery();
     const scheduler = await this.app.scheduling();
+    this.schedulerRepository = scheduler.repository;
+    this.executionRepository = (await this.app.storage()).execution;
     // Never repair a stale owner or restart dispatch as a side effect of opening the UI.
     if (!scheduler.repository.status().worker) scheduler.repository.pause("management_started");
     recovery.repository.report();
@@ -43,6 +59,23 @@ export class ManagementService {
   }
 
   recovery() { return this.recoveryPromise ??= this.app.recovery(); }
+
+  async desktopFeed(request: FeedRequest): Promise<DesktopFeed> {
+    const store = await this.app.storage(), monitor = await this.app.monitoring();
+    return store.database.transaction(() => {
+      const identity = store.database.connection.prepare("SELECT value FROM metadata WHERE key='database_identity'").get()?.value;
+      if (typeof identity !== "string" || !/^[a-f0-9]{32}$/.test(identity)) throw new AppError("STORAGE_INVALID", "数据库来源标识无效，请保留原文件核对。");
+      const scope = digest([identity, this.config]);
+      const state = monitor.repository.status();
+      const events = monitor.repository.events(), now = this.clock.now().getTime();
+      const boundary = events.filter((event) => ["baseline", "identity_changed", "clock_changed"].includes(event.type)).at(-1)?.sequence ?? 0;
+      const age = now - Date.parse(state?.snapshot?.fetchedAt ?? "");
+      const fresh = !!state?.identity && !state.errorCode && age >= 0 && age <= this.config.quotaMaxAgeMs;
+      return { provider: this.config.provider, ...desktopEvents(store.database, scope, request.scope === scope ? request.cursor : null, events,
+        (event) => fresh && event.sequence > boundary && now >= Date.parse(event.createdAt) && now - Date.parse(event.createdAt) <= this.config.quotaMaxAgeMs),
+        monitor: state ? { failures: state.failures, errorCode: state.errorCode } : null };
+    });
+  }
 
   private ensureOpen(): void {
     if (this.closing) throw new AppError("RUNTIME_STOPPING", "服务正在停止，请等待当前操作结束。");
@@ -52,8 +85,14 @@ export class ManagementService {
     const monitor = await this.app.monitoring();
     // The repository preserves identity, window-history and freshness safeguards.
     const saved = monitor.repository.status();
+    const active = (await this.app.storage()).execution.active();
+    const run = active ? await (await this.app.storage()).runs.get(active.runId) : null;
     return { provider: this.config.provider, closing: this.closing, now: this.clock.now().toISOString(),
       monitor: saved,
+      dispatch: this.loop?.job.kind === "scheduler" && this.loop.job.state === "running" ? this.dispatch : null,
+      quota: quotaDisplay(saved, this.config, this.clock.now()),
+      currentRun: run ? { id: run.id, taskId: run.taskId, name: run.taskSnapshot.name, revision: run.taskRevision,
+        status: run.status, startedAt: run.startedAt } : null,
       events: monitor.repository.events().slice(-30),
       scheduler: (await this.app.scheduling()).repository.status(),
       recovery: (await this.recovery()).repository.report(),
@@ -62,6 +101,31 @@ export class ManagementService {
 
   async tasks() {
     return (await this.app.tasks()).map(({ promptSnapshot: _prompt, ...task }) => task);
+  }
+
+  /** A deliberately small allowlist for user-exported diagnostics. Never serialize state, config or logs here. */
+  async diagnostics() {
+    const monitor = (await this.app.monitoring()).repository.status();
+    const scheduler = (await this.app.scheduling()).repository.status();
+    const recovery = (await this.recovery()).repository.report();
+    await this.app.storage();
+    const count = (status: string) => scheduler.queue.filter((item) => item.status === status).length;
+    const lastSample = monitor ? Date.parse(monitor.observedAt) : Number.NaN;
+    const ageSeconds = Number.isFinite(lastSample) ? Math.round((this.clock.now().getTime() - lastSample) / 1000) : null;
+    return {
+      format: 1,
+      createdAt: this.clock.now().toISOString(),
+      environment: { platform: process.platform, arch: process.arch, nodeMajor: Number(process.versions.node.split(".")[0]) },
+      provider: this.config.provider,
+      service: { closing: this.closing, loop: this.loop?.job.state === "running" ? this.loop.job.kind : null,
+        activeOperations: this.activity().activeOperations },
+      quota: { status: monitor?.availability.status ?? "unknown", failures: monitor?.failures ?? 0, ageSeconds },
+      scheduler: { paused: scheduler.paused, workerRecorded: scheduler.worker !== null,
+        queue: { queued: count("queued"), waitingQuota: count("waiting_quota"), running: count("running"),
+          succeeded: count("succeeded"), failed: count("failed"), cancelled: count("cancelled"),
+          needsAttention: count("needs_attention") } },
+      recovery: { issues: recovery.issues.length, owners: recovery.owners.length },
+    };
   }
 
   async saveTask(input: unknown) {
@@ -118,7 +182,10 @@ export class ManagementService {
     this.changingLoop = true;
     try {
       if (action === "sample") {
-        if (this.loop?.job.state === "running") throw new AppError("MONITOR_BUSY", "持续监控已在查询额度，无需重复采样。");
+        if (this.loop?.job.state === "running") {
+          (await this.app.monitoring()).requestSample();
+          return { requested: true };
+        }
         return await (await this.app.monitoring()).sample();
       }
       if (!["monitor-start", "monitor-stop", "scheduler-start", "scheduler-stop"].includes(action)) throw new AppError("INVALID_ARGUMENT", "未知监控操作。");
@@ -141,9 +208,10 @@ export class ManagementService {
       const monitor = await this.app.monitoring();
       const scheduler = await this.app.scheduling();
       if (kind === "scheduler") scheduler.repository.pause("worker_started");
+      this.dispatch = null;
       this.loop = this.launch(kind, (signal) => kind === "monitor"
         ? monitor.run(signal, (update) => { if (update.events.length) this.log("quota_changed"); })
-        : scheduler.run(signal, (event) => { this.log(event.event); }));
+        : scheduler.run(signal, (event) => { this.dispatch = { reason: event.reason ?? null, event: event.event, observedAt: this.clock.now().toISOString() }; this.log(event.event); }));
       return { ...this.loop.job };
     } finally { this.changingLoop = false; }
   }
@@ -162,7 +230,14 @@ export class ManagementService {
     this.ensureOpen();
     if (action === "task-save") return this.saveTask(data);
     if (action === "task-delete") { await store.tasks.remove(requireString(data.id, "id"), revision(data.revision)); return { archived: true }; }
-    if (action === "enqueue") return scheduler.enqueue(requireString(data.id, "id"));
+    if (action === "enqueue") return scheduler.enqueue(requireString(data.id, "id"), data.revision === undefined ? undefined : revision(data.revision));
+    if (action === "task-enable") {
+      if (typeof data.enabled !== "boolean") throw new AppError("INVALID_ARGUMENT", "enabled 必须为布尔值。");
+      const task = await store.tasks.get(requireString(data.id, "id"));
+      if (!task) throw new AppError("TASK_NOT_FOUND", "任务不存在或已归档。");
+      this.ensureOpen();
+      return store.tasks.update({ ...task, enabled: data.enabled }, task.promptSnapshot, revision(data.revision));
+    }
     if (action === "remove") return scheduler.remove(requireString(data.id, "id"));
     if (action === "pause") { scheduler.pause(); return scheduler.status(); }
     if (action === "resume") {
@@ -181,7 +256,7 @@ export class ManagementService {
       const execution = await this.app.execution();
       const recovery = await this.recovery();
       return { ...this.launch(action, async (signal, started) => {
-        if (action === "run") return execution.runTask(id, signal, started);
+        if (action === "run") return execution.runTask(id, signal, started, data.revision === undefined ? undefined : revision(data.revision));
         if (action === "run-start") return execution.start(id, signal, started);
         started(id);
         const result = action === "inspect" ? await recovery.inspect(id, signal) : await recovery.reconcile(id, signal);
@@ -204,23 +279,38 @@ export class ManagementService {
     throw new AppError("INVALID_ARGUMENT", "未知管理操作。");
   }
 
-  /** Synchronous admission barrier; HTTP drains accepted requests before closing storage. */
-  beginShutdown(): void {
-    this.closing = true;
-    for (const work of this.works) work.controller.abort();
+  activity(): RuntimeActivity {
+    const active = this.executionRepository?.active();
+    const manual = this.works.filter((work) => work !== this.loop && work.job.state === "running");
+    const ownRun = active?.ownerPid === process.pid ? active.runId : null;
+    return { activeOperations: manual.length + (ownRun && !manual.some((work) => work.job.runId === ownRun) ? 1 : 0),
+      activeRunId: ownRun, paused: this.schedulerRepository?.status().paused ?? true };
   }
 
-  close(): Promise<void> {
-    this.beginShutdown();
+  /** Admission and dispatch stop synchronously. Waiting never aborts an active turn. */
+  beginShutdown(mode: ShutdownMode = "cancel"): void {
+    if (this.closed) return;
+    this.closing = true;
+    if (this.shutdownMode !== "cancel") this.shutdownMode = mode;
+    if (this.loop?.job.kind === "scheduler") this.schedulerRepository?.pause("runtime_stopping");
+    if (this.shutdownMode === "cancel") for (const work of this.works) work.controller.abort();
+  }
+
+  prepareStop(mode: ShutdownMode = "cancel"): Promise<void> {
+    this.beginShutdown(mode);
+    return this.settlePromise ??= (async () => {
+      await Promise.all(this.works.filter((work) => work !== this.loop).map((work) => work.done));
+      while (this.loop?.job.kind === "scheduler" && this.loop.job.state === "running" && this.activity().activeRunId) await delay(50);
+      for (const work of this.works) work.controller.abort();
+      await Promise.all(this.works.map((work) => work.done));
+    })();
+  }
+
+  close(mode: ShutdownMode = "cancel"): Promise<void> {
+    this.beginShutdown(mode);
     this.closePromise ??= (async () => {
-      try {
-        if (this.loop?.job.kind === "scheduler") (await this.app.scheduling()).repository.pause("runtime_stopping");
-      } finally {
-        for (const work of this.works) work.controller.abort();
-        await Promise.all(this.works.map((work) => work.done));
-        // A loop transition may be waiting for an old operation; it rechecks closing before launch.
-        await this.app.close();
-      }
+      try { await this.prepareStop(mode); }
+      finally { try { await this.app.close(); } finally { this.closed = true; } }
     })();
     return this.closePromise;
   }

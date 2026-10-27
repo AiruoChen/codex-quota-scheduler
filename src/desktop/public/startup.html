@@ -2,10 +2,43 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Codex 任务助手</title>
   <link rel="stylesheet" href="startup.css">
 </head>
-<body><main><p class="brand">CODEX QUOTA SCHEDULER</p><h1>正在启动客户端</h1><p>正在连接本机服务并核对数据。首次使用将创建模拟环境，队列保持暂停。</p></main></body>
+<body><main><p class="brand">CODEX QUOTA SCHEDULER · 后台服务</p>
+  <h1 id="status-title">正在连接后台</h1><p id="status-detail">正在核对本机配置与服务记录。</p>
+  <p id="activity" class="activity"></p><p id="error" role="status"></p>
+  <p id="tray-notice" class="activity" hidden>关闭只隐藏窗口，不改变后台或派发状态。可从托盘打开窗口、暂停派发或安全退出。</p>
+  <div class="actions">
+    <button data-command="start">启动 / 重试连接</button><button data-command="status">查询状态</button>
+    <button data-command="restart">重启自有后台</button><button data-command="stop">停止自有后台</button>
+    <button data-command="stop-external">停止外部服务…</button><button data-command="recover">核对服务记录…</button>
+    <button data-command="exit">退出客户端</button><button data-command="keep-open">保持窗口打开</button>
+    <button data-command="wait" hidden>确认 / 等待完成</button><button data-command="cancel" class="danger" hidden>请求取消并继续</button>
+    <button data-command="hide">隐藏到托盘</button><button data-command="pause">暂停派发（当前任务继续）</button>
+  </div><p class="hint">有托盘时，关闭窗口保留后台。安全退出仍会等待结果落盘；外部服务只断开连接。</p>
+  <section aria-label="通知设置"><h2>托盘与通知</h2><p id="desktop-status" class="hint"></p><p id="desktop-reason" role="status"></p>
+    <label><input id="notifications-enabled" type="checkbox">启用系统通知</label>
+    <label><input id="quota-notifications-enabled" type="checkbox">通知完整查询已确认的额度刷新</label>
+    <h3>最近通知（最多 50 条）</h3><div id="notification-history" aria-live="polite"></div>
+  </section>
+  <section id="data-management" aria-label="安装与数据迁移"><h2>安装与数据迁移</h2>
+    <p id="data-location" class="paths"></p>
+    <button id="data-open-directory" type="button">打开用户数据目录</button>
+    <p>备份、导入与切换前须停止后台。导入会创建新的数据副本，不合库、不覆盖旧项目；已有快照、审计和遗留执行权保持原样，导入后队列暂停。</p>
+    <label><input id="data-confirm" type="checkbox">我已核对范围：停止会暂停派发并等待当前任务落盘；导入/切换不会自动执行；旧项目须保持停止，避免两份数据重复派发。</label>
+    <div class="actions"><button data-transfer="stop">停止自有后台并等待落盘</button><button data-transfer="backup">创建完整数据备份</button><button data-transfer="preview">选择旧配置 / 备份并预检…</button></div>
+    <div id="data-preview" hidden><h3>导入预检</h3><p id="data-preview-detail" class="paths"></p><button id="data-commit" data-transfer="commit">确认导入新副本并切换（不启动）</button></div>
+    <p id="data-backup" class="paths"></p><label>保留的数据配置 <select id="data-profiles"></select></label><button data-transfer="switch">切换所选配置（不启动）</button>
+    <h3>手动升级与卸载</h3><p>准备升级将等待自有后台完成、创建备份后退出。再手动运行新安装包；安装器不会强杀任务。卸载默认保留用户数据、项目及 Codex 登录目录。</p>
+    <button data-transfer="prepare-upgrade">备份并安全退出，准备升级</button><p id="data-result" role="status"></p>
+  </section>
+  <section aria-label="离线使用说明"><h2>离线使用说明</h2><p>后台连接失败时，此说明仍可阅读；连接后可在“设置与帮助”查看完整步骤。</p>
+    <details><summary>首次配置和入队</summary><p>点击“启动 / 重试连接”。首次可先用模拟额度体验；模拟模式不会执行真实任务。要接入真实 Codex，先安装并登录本机 CLI，在管理页校验保存真实连接配置，重启服务并重新查询额度。在“任务管理”保存任务并核对指令、目录和权限，明确加入队列；调度进程启动后还须手动恢复派发。</p></details>
+    <details><summary>暂停、取消与恢复</summary><p>“暂停派发”阻止领取下一项，当前任务可继续完成；请求取消后等待终态确认。结果不明时先保留记录，在“异常与恢复”只读核对原账户、原会话和准确回合；不得自动重发或猜测结果。重启后队列默认暂停。</p></details>
+    <details><summary>备份、升级和卸载</summary><p>在上方“安装与数据迁移”停止后台并等待结果落盘，再创建完整备份。导入旧配置先预检，明确确认后仅创建副本。升级前创建备份并安全退出，再运行新安装包。卸载默认保留个人数据、项目和 Codex 登录目录。</p></details>
+  </section>
+</main><script type="module" src="../control-renderer.js"></script><script type="module" src="../data-renderer.js"></script></body>
 </html>

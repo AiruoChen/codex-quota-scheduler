@@ -16,6 +16,8 @@ import { hasResumeAuthorization } from "../../domain/resume-authorization.js";
 import { resumeConfig, resumeWorkspaceRoots, resumeRequirements, verifyResumedAuthorization } from "./resume-authorization.js";
 import { continuationReady, quotaInterruption } from "../../domain/continuation.js";
 import { validateModel } from "./model-validation.js";
+import { inspectTurnEnvironmentOverride } from "./turn-environment-protocol.js";
+import { resumeMismatchDiagnostic, resumeMismatchMessage } from "./resume-diagnostics.js";
 
 type VerifiedQuota = QuotaSnapshot & { account: NonNullable<QuotaSnapshot["account"]> };
 const sameAccount = (a: NonNullable<QuotaSnapshot["account"]>, b: NonNullable<QuotaSnapshot["account"]>) =>
@@ -94,9 +96,16 @@ export class CodexExecutor implements TaskExecutor {
       if (!isRecord(response) || !isRecord(response.thread) || typeof response.thread.id !== "string") throw new AppError("CODEX_PROTOCOL_ERROR", "会话响应缺少 thread.id。");
       const thread = response.thread;
       if (explicitlyAuthorized) {
-        try { await verifyResumedAuthorization(response, task); }
-        catch { return { status: "needs_attention", output: "", error: "CODEX_AUTHORIZATION_MISMATCH: 服务端实际权限未通过核验，未发送指令；请人工核对会话后重新授权。" }; }
-        sink.event("resume_authorization_verified", { version: 1, sandbox: task.execution?.sandbox ?? "read-only", readScope: "local-files", networkAccess: false, writableFolderCount: environment!.writableRoots.length });
+        let environmentOverrideVerified = false;
+        try {
+          if (thread.environments === null) environmentOverrideVerified = await inspectTurnEnvironmentOverride(launch, this.config.codex, signal);
+          await verifyResumedAuthorization(response, task, environmentOverrideVerified);
+        } catch (error) {
+          sink.event("resume_authorization_mismatch", { ...resumeMismatchDiagnostic(error, launch.version, environmentOverrideVerified) });
+          return { status: "needs_attention", output: "", error: `CODEX_AUTHORIZATION_MISMATCH: ${resumeMismatchMessage(error)}` };
+        }
+        sink.event("resume_authorization_verified", { version: 1, sandbox: task.execution?.sandbox ?? "read-only", readScope: "local-files", networkAccess: false,
+          writableFolderCount: environment!.writableRoots.length, environmentSelection: thread.environments === null ? "unreported" : "empty", environmentOverrideVerified });
       }
       if (environment?.projectKnown && thread.projectId !== environment.projectId) throw new AppError("PROJECT_CHANGED", "服务端返回的项目归属与任务快照不一致。");
       if (isRecord(thread.status) && thread.status.type === "active") throw new AppError("THREAD_BUSY", "目标会话已有活动回合，不能追加指令。");

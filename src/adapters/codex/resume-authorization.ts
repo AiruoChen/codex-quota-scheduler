@@ -7,6 +7,7 @@ import { hasResumeAuthorization } from "../../domain/resume-authorization.js";
 import { AppError } from "../../shared/errors.js";
 import { isRecord } from "../../shared/validation.js";
 import type { StdioRpcClient } from "./rpc-client.js";
+import { ResumeAuthorizationMismatch } from "./resume-diagnostics.js";
 
 type Sandbox = "read-only" | "workspace-write";
 export async function resumeRequirements(client: StdioRpcClient, signal?: AbortSignal): Promise<Sandbox[]> {
@@ -56,24 +57,42 @@ export function resumeConfig(task: TaskDefinition): Record<string, unknown> {
 }
 
 /** Verify effective legacy response before sending any prompt. Unknown profiles/fields fail closed. */
-export async function verifyResumedAuthorization(response: Record<string, unknown>, task: TaskDefinition): Promise<void> {
-  const fail = () => { throw new AppError("CODEX_AUTHORIZATION_MISMATCH", "服务端实际权限与本次授权不一致，未发送指令；请核对会话状态后重新授权。"); };
-  if (!hasResumeAuthorization(task) || response.approvalPolicy !== "on-request" || response.approvalsReviewer !== "user"
-    || typeof response.cwd !== "string" || await realpath(response.cwd) !== task.projectDir || !isRecord(response.sandbox)
-    || !Array.isArray(response.runtimeWorkspaceRoots) || !isRecord(response.thread)
-    || !Array.isArray(response.thread.environments) || response.thread.environments.length !== 0) return fail();
-  const policy = response.sandbox, writes = task.environment!.writableRoots;
+export async function verifyResumedAuthorization(response: Record<string, unknown>, task: TaskDefinition, environmentOverrideVerified = false): Promise<void> {
+  const fail = (reason: ConstructorParameters<typeof ResumeAuthorizationMismatch>[0]): never => { throw new ResumeAuthorizationMismatch(reason); };
+  if (!hasResumeAuthorization(task)) return fail("grant_invalid");
+  if (!isRecord(response.thread) || task.session.mode !== "resume" || response.thread.id !== task.session.threadId) return fail("thread_mismatch");
+  if (response.approvalPolicy !== "on-request") return fail("approval_policy");
+  if (response.approvalsReviewer !== "user") return fail("approval_reviewer");
+  const canonical = async (path: unknown): Promise<string> => {
+    if (typeof path !== "string" || !isAbsolute(path)) return fail("paths_unverified");
+    try { return await realpath(path); } catch { return fail("paths_unverified"); }
+  };
+  const cwd = await canonical(task.projectDir);
+  if (await canonical(response.cwd) !== cwd) return fail("cwd_mismatch");
+  if (!isRecord(response.sandbox)) return fail("sandbox_missing");
+  // null is documented as unexposed metadata, not permission denial or proof of no remote access.
+  // Accept it only when this exact CLI's generated schema confirms environments: [] disables access.
+  // runTurn must send that override explicitly; selected or malformed environments remain blocked.
+  const environments = response.thread.environments;
+  if (Array.isArray(environments)) {
+    if (environments.length) return fail("environment_selected");
+  } else if (environments !== null || environmentOverrideVerified !== true) return fail("environment_unknown");
+  const policy = response.sandbox;
   const paths = async (value: unknown): Promise<string[]> => {
-    if (!Array.isArray(value) || value.length > 100 || value.some(path => typeof path !== "string" || !isAbsolute(path))) return fail();
-    return [...new Set(await Promise.all(value.map(path => realpath(String(path)))))].sort();
+    if (!Array.isArray(value) || value.length > 100) return fail("paths_unverified");
+    return [...new Set(await Promise.all(value.map(canonical)))].sort();
   };
   const same = (a: string[], b: string[]) => JSON.stringify([...new Set(a)].sort()) === JSON.stringify([...new Set(b)].sort());
-  if (!same(await paths(response.runtimeWorkspaceRoots), resumeWorkspaceRoots(task))) return fail();
-  if (policy.networkAccess !== false && policy.networkAccess !== undefined) return fail();
+  if (!same(await paths(response.runtimeWorkspaceRoots), await paths(resumeWorkspaceRoots(task)))) return fail("runtime_roots");
+  if (policy.networkAccess !== false && policy.networkAccess !== undefined) return fail("network_access");
   if (task.execution?.sandbox === "workspace-write") {
-    if (policy.type !== "workspaceWrite" || policy.excludeSlashTmp !== true || policy.excludeTmpdirEnvVar !== true
-      || Object.keys(policy).some(key => !["type", "networkAccess", "excludeSlashTmp", "excludeTmpdirEnvVar", "writableRoots"].includes(key))) return fail();
+    if (policy.type !== "workspaceWrite") return fail("sandbox_type");
+    if (policy.excludeSlashTmp !== true || policy.excludeTmpdirEnvVar !== true) return fail("temporary_writes");
+    if (Object.keys(policy).some(key => !["type", "networkAccess", "excludeSlashTmp", "excludeTmpdirEnvVar", "writableRoots"].includes(key))) return fail("sandbox_fields");
     // cwd is also writable under this protocol even if not repeated in writableRoots.
-    if (!same([...await paths(policy.writableRoots ?? []), task.projectDir], writes)) return fail();
-  } else if (policy.type !== "readOnly" || Object.keys(policy).some(key => !["type", "networkAccess"].includes(key))) return fail();
+    if (!same([...await paths(policy.writableRoots ?? []), cwd], await paths(task.environment!.writableRoots))) return fail("writable_roots");
+  } else {
+    if (policy.type !== "readOnly") return fail("sandbox_type");
+    if (Object.keys(policy).some(key => !["type", "networkAccess"].includes(key))) return fail("sandbox_fields");
+  }
 }

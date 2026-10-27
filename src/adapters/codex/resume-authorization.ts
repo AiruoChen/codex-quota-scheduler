@@ -60,7 +60,8 @@ export async function verifyResumedAuthorization(response: Record<string, unknow
   const fail = () => { throw new AppError("CODEX_AUTHORIZATION_MISMATCH", "服务端实际权限与本次授权不一致，未发送指令；请核对会话状态后重新授权。"); };
   if (!hasResumeAuthorization(task) || response.approvalPolicy !== "on-request" || response.approvalsReviewer !== "user"
     || typeof response.cwd !== "string" || await realpath(response.cwd) !== task.projectDir || !isRecord(response.sandbox)
-    || !Array.isArray(response.runtimeWorkspaceRoots)) return fail();
+    || !Array.isArray(response.runtimeWorkspaceRoots) || !isRecord(response.thread)
+    || !Array.isArray(response.thread.environments) || response.thread.environments.length !== 0) return fail();
   const policy = response.sandbox, writes = task.environment!.writableRoots;
   const paths = async (value: unknown): Promise<string[]> => {
     if (!Array.isArray(value) || value.length > 100 || value.some(path => typeof path !== "string" || !isAbsolute(path))) return fail();

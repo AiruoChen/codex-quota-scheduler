@@ -41,6 +41,7 @@ for (const writing of [false, true]) test(`explicit ${writing ? "write" : "read"
     assert.equal(resumes.length, 1); assert.equal(turns.length, 1); assert.equal(resumes[0]!.params!.threadId, "thread-1");
     assert.equal(resumes[0]!.params!.approvalPolicy, "on-request"); assert.equal(resumes[0]!.params!.approvalsReviewer, "user");
     assert.deepEqual(turns[0]!.params!.runtimeWorkspaceRoots, [env.dir]);
+    assert.deepEqual(turns[0]!.params!.environments, []);
     assert.equal((turns[0]!.params!.sandboxPolicy as Record<string, unknown>).networkAccess, false);
     assert.equal(store.execution.events(run.id).filter(e => e.type === "resume_authorization_verified").length, 1);
     await store.tasks.update({ ...task, name: "Changed later" }, "CHANGED_LATER", 1);
@@ -87,7 +88,7 @@ test("unexpected effective permissions after resume leave needs_attention withou
 test("effective policy validation rejects network, writable, temp and approval expansion", async () => {
   const env = await setup();
   try {
-    const task = await env.task(true), response = { cwd: env.dir, approvalPolicy: "on-request", approvalsReviewer: "user", runtimeWorkspaceRoots: [env.dir],
+    const task = await env.task(true), response = { cwd: env.dir, approvalPolicy: "on-request", approvalsReviewer: "user", runtimeWorkspaceRoots: [env.dir], thread: { environments: [] as unknown[] },
       sandbox: { type: "workspaceWrite", networkAccess: false, writableRoots: [env.dir], excludeSlashTmp: true, excludeTmpdirEnvVar: true } };
     await verifyResumedAuthorization(response, task);
     for (const mutate of [
@@ -97,6 +98,8 @@ test("effective policy validation rejects network, writable, temp and approval e
       (r: typeof response) => { r.approvalPolicy = "never"; },
       (r: typeof response) => { r.approvalsReviewer = "auto_review"; },
       (r: typeof response) => { r.runtimeWorkspaceRoots.push(join(env.dir, "second")); },
+      (r: typeof response) => { r.thread.environments.push({ environmentId: "remote-fixture" }); },
+      (r: typeof response) => { (r.thread as { environments: unknown }).environments = null; },
     ]) { const changed = structuredClone(response); mutate(changed); await assert.rejects(verifyResumedAuthorization(changed, task), { code: "CODEX_AUTHORIZATION_MISMATCH" }); }
     const forged = structuredClone(task); forged.environment!.resumeAuthorization!.threadId = "different"; assert.throws(() => parseTask(forged, "."), { code: "INVALID_TASK" });
   } finally { await env.cleanup(); }

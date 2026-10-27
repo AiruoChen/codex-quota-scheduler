@@ -89,7 +89,7 @@ input.on("line", (line) => {
     }
     cwd = message.params.cwd;
     const explicit = !!message.params.config;
-    result({ thread: { id: "thread-1", cwd, ...(Object.hasOwn(message.params, "projectId") ? { projectId: message.params.projectId } : scenario === "catalog-paged" || scenario.startsWith("authorization-") ? { projectId: "official-project-1" } : {}), status: { type: "idle" } }, cwd, model: "fixture-model",
+    result({ thread: { id: "thread-1", cwd, ...(explicit ? { environments: [] } : {}), ...(Object.hasOwn(message.params, "projectId") ? { projectId: message.params.projectId } : scenario === "catalog-paged" || scenario.startsWith("authorization-") ? { projectId: "official-project-1" } : {}), status: { type: "idle" } }, cwd, model: "fixture-model",
       ...(explicit ? { approvalPolicy: "on-request", approvalsReviewer: "user", runtimeWorkspaceRoots: message.params.runtimeWorkspaceRoots,
         sandbox: scenario === "authorization-mismatch" ? { type: "dangerFullAccess" } : message.params.sandbox === "read-only" ? { type: "readOnly", networkAccess: false }
           : { type: "workspaceWrite", writableRoots: message.params.config["sandbox_workspace_write.writable_roots"], networkAccess: false,

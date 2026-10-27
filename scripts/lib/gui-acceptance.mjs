@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 
 /** Real DOM interaction in a disposable mock profile; no account or real submission. */
 export async function guiAcceptance(page, directory, checkpoint = () => {}) {
@@ -13,9 +14,14 @@ export async function guiAcceptance(page, directory, checkpoint = () => {}) {
   await evaluate("location.hash='#tasks'");
   await wait("!document.getElementById('tasks').hidden");
   checkpoint("gui-create-open");
+  const heldCatalog = [];
+  const stopCatalog = page.on("Fetch.requestPaused", event => { heldCatalog.push(event.requestId); });
+  await call("Fetch.enable", { patterns: [{ urlPattern: "*/api/catalog/models", requestStage: "Request" }] });
   await wait("!document.getElementById('new-task').disabled");
   await evaluate("document.getElementById('new-task').click()");
   await wait("document.getElementById('task-dialog').open");
+  for (let attempt = 0; attempt < 100 && !heldCatalog.length; attempt++) await delay(25);
+  assert.ok(heldCatalog.length, "Mock create remains usable while metadata loading is deliberately held");
   checkpoint("gui-create-save");
   await wait("!document.querySelector('#task-form button[type=submit]').disabled");
   await evaluate(`(() => {
@@ -29,7 +35,11 @@ export async function guiAcceptance(page, directory, checkpoint = () => {}) {
   await wait("!document.getElementById('task-dialog').open && document.getElementById('task-rows').textContent.includes('GUI <b>验收</b>')");
   taskId = await page.evaluate("fetch('/api/tasks').then(r=>r.json()).then(tasks=>tasks.find(t=>t.name==='GUI <b>验收</b>').id)");
   assert.match(taskId, /^[a-f0-9-]{36}$/);
+  for (const requestId of heldCatalog) await call("Fetch.continueRequest", { requestId });
+  await call("Fetch.disable"); stopCatalog();
   assert.equal(await evaluate("document.getElementById('task-sort').value"), "created_desc");
+  await evaluate("document.getElementById('task-sort').value='created_asc';document.getElementById('task-sort').dispatchEvent(new Event('change'))");
+  await wait("fetch('/api/preferences').then(r=>r.json()).then(p=>p.taskSort==='created_asc')");
   assert.equal(await evaluate("document.querySelectorAll('#task-rows b').length"), 0, "Task names are rendered as text");
   checkpoint("gui-edit-open");
   await evaluate("[...document.querySelectorAll('#task-rows tr')].find(row=>row.textContent.includes('gui-smoke')).querySelector('button').click()");

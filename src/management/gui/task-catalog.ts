@@ -4,7 +4,7 @@ import { api } from "./api.js";
 import { $, el } from "./dom.js";
 
 /** Catalog state belongs to one open editor. No account metadata is persisted in browser storage. */
-export function taskCatalog(form: HTMLFormElement) {
+export function taskCatalog(form: HTMLFormElement, provider: () => "codex" | "mock" | undefined) {
   const select = (name: string) => form.elements.namedItem(name) as HTMLSelectElement;
   let epoch = 0, threadRequest = 0, scope = "", cursor: string | null = null;
   let source: "codex" | "mock" | "unknown" = "unknown";
@@ -112,7 +112,7 @@ export function taskCatalog(form: HTMLFormElement) {
       const mode = select("session").value === "resume" ? "resume" : select("targetMode").value;
       if (mode === "folder") {
         // Mock folders remain entirely local. Real selections carry the account scope back to the server.
-        if (source === "mock") return {};
+        if (provider() === "mock" || source === "mock") return {};
         if (source !== "codex" || !scope) throw new Error("请先成功读取当前账户目录；读取失败时不会保存未知环境。");
         const cwd = (form.elements.namedItem("projectDir") as HTMLInputElement).value;
         return { scope, target: { mode, cwd, writableRoots: select("sandbox").value === "workspace-write" ? [cwd] : [] } };

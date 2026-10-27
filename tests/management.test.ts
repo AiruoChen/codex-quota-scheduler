@@ -63,6 +63,12 @@ test("U02/U07: GUI API creates a backend UUID idempotently and saves reserve pai
     const changed = await env.get("/api/config"); assert.deepEqual((changed.saved as { quotaReserves: unknown }).quotaReserves, { fiveHour: 12.5, weekly: 25 });
     assert.equal((changed.active as { quotaReserves?: unknown }).quotaReserves, undefined);
     assert.equal((await env.action("quota-reserves-save", { fiveHour: 20, weekly: 20, revision: config.revision })).status, 409);
+    assert.equal((await env.get("/api/preferences")).taskSort, "created_desc");
+    assert.equal((await env.action("task-sort-save", { sort: "created_asc" })).status, 200);
+    const reopened = new ManagementService(env.config, env.configPath);
+    try { assert.equal((await reopened.preferences()).taskSort, "created_asc"); }
+    finally { await reopened.close(); }
+    assert.equal((await env.action("task-sort-save", { sort: "invalid" })).status, 400);
   } finally { await env.cleanup(); }
 });
 

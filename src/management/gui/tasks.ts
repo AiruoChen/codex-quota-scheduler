@@ -1,5 +1,5 @@
 import type { StoredTask, TaskPage } from "../../domain/task.js";
-import { api, viewScope } from "./api.js";
+import { api } from "./api.js";
 import { $, el, button, busy, notice, showDialog, setDisabled, time } from "./dom.js";
 import { realButton, type UiContext } from "./context.js";
 import { taskPreview } from "./task-preview.js";
@@ -11,9 +11,10 @@ export function tasksView(context: UiContext) {
   let request = 0, opening = 0, offset = 0;
   let debounce: ReturnType<typeof setTimeout> | undefined;
   const preview = taskPreview(context);
-  const form = $<HTMLFormElement>("task-form"), catalog = taskCatalog(form);
+  const form = $<HTMLFormElement>("task-form"), catalog = taskCatalog(form, () => context.state()?.provider);
   let createRequest = crypto.randomUUID();
-  const sort = $<HTMLSelectElement>("task-sort"); let sortLoaded = false;
+  const sort = $<HTMLSelectElement>("task-sort"); let sorting: Promise<void> | undefined; sort.disabled = true;
+  const loadSort = () => sorting ??= api<{ taskSort: string }>("/api/preferences").then(preferences => { sort.value = preferences.taskSort; sort.disabled = false; }).catch(error => { sorting = undefined; throw error; });
   async function open(id?: string) {
     const sequence = ++opening;
     const task = id ? await api<StoredTask>(`/api/task?id=${encodeURIComponent(id)}`) : null;
@@ -34,10 +35,7 @@ export function tasksView(context: UiContext) {
     void catalog.open(task).catch(error => { if (sequence === opening) $("catalog-status").textContent = error instanceof Error ? error.message : "读取目录失败，可重试。"; });
   }
   async function load() {
-    if (!sortLoaded) {
-      try { const saved = localStorage.getItem(`cqs-task-sort:${viewScope()}`); if (saved === "created_asc" || saved === "created_desc") sort.value = saved; } catch { /* Sorting remains usable without browser storage. */ }
-      sortLoaded = true;
-    }
+    await loadSort();
     const current = ++request;
     const params = new URLSearchParams({ offset: String(offset), limit: "25", search: $<HTMLInputElement>("task-search").value.trim(), enabled: $<HTMLSelectElement>("task-filter").value, sort: sort.value });
     const page = await api<TaskPage>(`/api/tasks/page?${params}`);
@@ -87,7 +85,7 @@ export function tasksView(context: UiContext) {
   for (const id of ["task-search", "task-filter"]) $(id).addEventListener(id === "task-search" ? "input" : "change", () => {
     offset = 0; request++; clearTimeout(debounce); debounce = setTimeout(() => { void load().catch((error: unknown) => notice(String(error), true)); }, 200);
   });
-  sort.onchange = () => { offset = 0; try { localStorage.setItem(`cqs-task-sort:${viewScope()}`, sort.value); } catch { /* Storage is optional. */ } void load().catch(error => notice(String(error), true)); };
+  sort.onchange = () => { offset = 0; void api("/api/action", { action: "task-sort-save", sort: sort.value }).then(load).catch(error => notice(String(error), true)); };
   $("tasks-prev").onclick = () => { void busy($<HTMLButtonElement>("tasks-prev"), async () => { offset = Math.max(0, offset - 25); await load(); }); };
   $("tasks-next").onclick = () => { void busy($<HTMLButtonElement>("tasks-next"), async () => { offset += 25; await load(); }); };
   $("new-task").onclick = () => { void busy($<HTMLButtonElement>("new-task"), () => open()); };

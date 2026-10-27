@@ -33,6 +33,12 @@ type Work = { job: ManagementJob; controller: AbortController; done: Promise<voi
 /** Owns long operations independently of browser connections. Domain services retain all execution rules. */
 export class ManagementService {
   viewScope(): string { return digest(this.configPath); }
+  async preferences() {
+    const db = (await this.app.storage()).database;
+    const value = db.connection.prepare("SELECT value FROM metadata WHERE key=?").get(`ui.taskSort:${this.viewScope()}`)?.value;
+    if (value !== undefined && value !== "created_asc" && value !== "created_desc") throw new AppError("STORAGE_INVALID", "任务排序偏好无效，请保留数据核对。");
+    return { taskSort: value ?? "created_desc" };
+  }
   async catalog(kind: string, params: URLSearchParams) {
     this.ensureOpen();
     if (this.config.provider !== "codex") return { source: "mock", scope: digest(["mock", this.configPath]), items: [], nextCursor: null };
@@ -266,6 +272,11 @@ export class ManagementService {
     const scheduler = (await this.app.scheduling()).repository;
     this.ensureOpen();
     if (action === "task-save") return this.saveTask(data);
+    if (action === "task-sort-save") {
+      if (data.sort !== "created_asc" && data.sort !== "created_desc") throw new AppError("INVALID_ARGUMENT", "任务排序方式无效。");
+      store.database.transaction(() => store.database.connection.prepare("INSERT INTO metadata(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(`ui.taskSort:${this.viewScope()}`, String(data.sort)));
+      return { taskSort: data.sort };
+    }
     if (action === "quota-reserves-save") {
       const expected = requireString(data.revision, "revision");
       return new ConfigManager(this.configPath).set("quotaReserves", { fiveHour: requireNumber(data.fiveHour, "fiveHour", 0, 100), weekly: requireNumber(data.weekly, "weekly", 0, 100) }, expected);

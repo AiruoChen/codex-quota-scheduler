@@ -14,6 +14,10 @@ import { migrations } from "../src/storage/database.js";
 import { claimInstance } from "../src/runtime/instance.js";
 
 const hash = (value: Buffer) => createHash("sha256").update(value).digest("hex");
+function legacySix(db: DatabaseSync) {
+  // Build a genuine old schema, rather than relabelling a database containing newer tables.
+  db.exec("DROP VIEW dispatch_queue; DROP TABLE continuation_queue; DROP TABLE continuation_plans; DROP TABLE continuation_chains; DROP TABLE queue_positions; DROP TABLE task_create_requests; PRAGMA user_version=6;DELETE FROM metadata WHERE key='database_identity'");
+}
 async function setup() {
   const root = await mkdtemp(join(tmpdir(), "migration 中文 &-"));
   const source: DesktopOptions = { dataDir: join(root, "old"), configPath: join(root, "old/config/local.json"), debugging: false };
@@ -35,7 +39,7 @@ test("导入保留任务版本、快照、事件与相对路径语义；源文�
   const e = await setup();
   try {
     const old = new DatabaseSync(e.config.storage.databasePath);
-    old.exec("PRAGMA user_version=6;DELETE FROM metadata WHERE key='database_identity'"); old.close();
+    legacySix(old); old.close();
     const sourceBytes = await readFile(e.config.storage.databasePath), configBytes = await readFile(e.source.configPath);
     const preview = await e.manager.preview(e.source.configPath);
     assert.equal(preview.schema, 6); assert.equal(preview.versions, 2); assert.equal(preview.attention, 1);
@@ -149,7 +153,7 @@ test("首次打开旧版本先备份；模式迁移保留原件备份，重复�
   const e = await setup();
   try {
     const manager = new DesktopDataTransfer(e.source, "0.2.0");
-    const db = new DatabaseSync(e.config.storage.databasePath); db.exec("PRAGMA user_version=6;DELETE FROM metadata WHERE key='database_identity'"); db.close();
+    const db = new DatabaseSync(e.config.storage.databasePath); legacySix(db); db.close();
     await manager.prepareStartup(); const view = await manager.view(); assert.ok(view.backup);
     assert.equal(inspectProfileDatabase(join(view.backup!, "state.sqlite")).schema, 6);
     assert.equal(inspectProfileDatabase(e.config.storage.databasePath).schema, migrations.length);
@@ -196,7 +200,7 @@ test("旧模式仍有活动执行权时拒绝升级，数据目录联接不能�
   try {
     const db = new DatabaseSync(e.config.storage.databasePath);
     db.prepare("INSERT INTO execution_lock VALUES(1,?,?,0,1)").run(e.run.id, process.pid);
-    db.exec("PRAGMA user_version=6;DELETE FROM metadata WHERE key='database_identity'"); db.close();
+    legacySix(db); db.close();
     const before = hash(await readFile(e.config.storage.databasePath));
     assert.throws(() => new SqliteStore(e.config.storage.databasePath), { code: "STORAGE_BUSY" });
     assert.equal(hash(await readFile(e.config.storage.databasePath)), before);

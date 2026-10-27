@@ -15,10 +15,12 @@ export interface TaskDefinition {
   promptFile: string;
   priority: number;
   model?: string;
+  environment?: import("./catalog.js").ExecutionEnvironment;
+  quotaContinuation?: { enabled: boolean; maxAttempts: number };
   execution?: {
     sandbox: "read-only" | "workspace-write";
     timeoutMs: number;
-    effort?: "low" | "medium" | "high" | "xhigh";
+    effort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
   };
   session: { mode: "new" } | { mode: "resume"; threadId: string };
 }
@@ -38,6 +40,7 @@ export interface TaskRun {
   promptSnapshot: string;
   output: string;
   error: string | null;
+  continuation?: import("./continuation.js").ContinuationLink;
 }
 
 export interface StoredTask extends TaskDefinition {
@@ -57,7 +60,7 @@ export interface TaskRevision {
   createdAt: string;
 }
 
-export interface TaskQuery { search: string; enabled: "all" | "enabled" | "disabled"; offset: number; limit: number }
+export interface TaskQuery { search: string; enabled: "all" | "enabled" | "disabled"; offset: number; limit: number; sort?: "created_desc" | "created_asc" }
 export interface TaskPage { items: Omit<StoredTask, "promptSnapshot">[]; total: number; offset: number; limit: number }
 export type RunSummary = Omit<TaskRun, "promptSnapshot" | "output" | "taskSnapshot"> & { name: string; projectDir: string };
 export interface RunQuery { search: string; status: "all" | TaskStatus; offset: number; limit: number }
@@ -85,6 +88,8 @@ export interface ExecutionOutcome {
   status: "succeeded" | "failed" | "cancelled" | "needs_attention" | "waiting_quota";
   output: string;
   error: string | null;
+  quotaFailure?: { threadId: string; turnId: string };
+  quotaInterruption?: import("./continuation.js").QuotaInterruption;
 }
 
 export interface ExecutionSink {

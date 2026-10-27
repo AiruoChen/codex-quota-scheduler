@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { dirname, resolve, isAbsolute } from "node:path";
 import type { TaskDefinition } from "../domain/task.js";
 import { AppError } from "../shared/errors.js";
 import { requireNumber, requireRecord, requireString } from "../shared/validation.js";
@@ -37,6 +37,24 @@ export function parseTask(value: unknown, base: string, label = "task"): TaskDef
       : { mode: "resume", threadId: requireString(session.threadId, "threadId") },
   };
   if (data.model !== undefined) task.model = requireString(data.model, "model");
+  if (data.environment !== undefined) {
+    const env = requireRecord(data.environment, "environment");
+    if (env.version !== 1 || !["folder", "project", "unassigned", "resume"].includes(String(env.mode))
+      || typeof env.scope !== "string" || !/^[a-f0-9]{64}$/.test(env.scope) || typeof env.connectionKey !== "string" || !/^[a-f0-9]{64}$/.test(env.connectionKey)
+      || !(env.projectId === null || typeof env.projectId === "string") || typeof env.projectKnown !== "boolean"
+      || typeof env.permissionsVerified !== "boolean" || env.cwd !== task.projectDir
+      || ![env.roots, env.writableRoots].every(paths => Array.isArray(paths) && paths.length <= 100 && paths.every(path => typeof path === "string" && isAbsolute(path)))) {
+      throw new AppError("INVALID_TASK", "执行环境快照无效。");
+    }
+    task.environment = { version: 1, mode: env.mode as NonNullable<TaskDefinition["environment"]>["mode"], scope: env.scope, connectionKey: env.connectionKey,
+      projectId: env.projectId, projectKnown: env.projectKnown, roots: [...env.roots as string[]], cwd: task.projectDir,
+      writableRoots: [...env.writableRoots as string[]], permissionsVerified: env.permissionsVerified };
+  }
+  if (data.quotaContinuation !== undefined) {
+    const policy = requireRecord(data.quotaContinuation, "quotaContinuation");
+    if (typeof policy.enabled !== "boolean" || !Number.isSafeInteger(policy.maxAttempts) || Number(policy.maxAttempts) < 0 || Number(policy.maxAttempts) > 20) throw new AppError("INVALID_TASK", "自动继续次数必须为 0～20 的整数。");
+    task.quotaContinuation = { enabled: policy.enabled, maxAttempts: Number(policy.maxAttempts) };
+  }
   if (data.execution !== undefined) {
     const execution = requireRecord(data.execution, "execution");
     const sandbox = execution.sandbox ?? "read-only";
@@ -46,7 +64,7 @@ export function parseTask(value: unknown, base: string, label = "task"): TaskDef
       timeoutMs: execution.timeoutMs === undefined ? 900000 : requireNumber(execution.timeoutMs, "execution.timeoutMs", 100, 86400000),
     };
     if (execution.effort !== undefined) {
-      if (!["low", "medium", "high", "xhigh"].includes(String(execution.effort))) throw new AppError("INVALID_TASK", "不支持此 reasoning effort");
+      if (!["none", "minimal", "low", "medium", "high", "xhigh"].includes(String(execution.effort))) throw new AppError("INVALID_TASK", "不支持此 reasoning effort");
       task.execution.effort = execution.effort as "low" | "medium" | "high" | "xhigh";
     }
   }

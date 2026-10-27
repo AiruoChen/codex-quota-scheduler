@@ -14,6 +14,7 @@
     "test": "npm run build && node scripts/test.mjs",
     "start": "node --experimental-sqlite dist/src/cli.js",
     "demo": "npm run build && node --experimental-sqlite dist/src/cli.js demo",
+    "diagnose:resume": "npm run build && node --experimental-sqlite scripts/diagnose-resume.mjs",
     "ui": "npm run build && node --experimental-sqlite dist/src/cli.js ui",
     "package": "npm run build && node scripts/package.mjs",
     "desktop": "npm run build && electron .",

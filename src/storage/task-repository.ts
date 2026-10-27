@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
 import type { Clock, TaskRepository } from "../domain/ports.js";
 import type { StoredTask, TaskDefinition, TaskRevision, TaskQuery, TaskPage } from "../domain/task.js";
@@ -33,14 +33,15 @@ export class SqliteTaskRepository implements TaskRepository {
 
   async query(query: TaskQuery): Promise<TaskPage> {
     if (!Number.isSafeInteger(query.offset) || query.offset < 0 || !Number.isSafeInteger(query.limit) || query.limit < 1 || query.limit > 100
-      || query.search.length > 200 || !["all", "enabled", "disabled"].includes(query.enabled)) throw new AppError("INVALID_ARGUMENT", "任务筛选或分页参数无效。");
+      || query.search.length > 200 || !["all", "enabled", "disabled"].includes(query.enabled)
+      || query.sort !== undefined && !["created_desc", "created_asc"].includes(query.sort)) throw new AppError("INVALID_ARGUMENT", "任务筛选或分页参数无效。");
     const where = `deleted_at IS NULL AND (?='all' OR json_extract(definition_json,'$.enabled')=?)
       AND (instr(lower(id),lower(?))>0 OR instr(lower(json_extract(definition_json,'$.name')),lower(?))>0
         OR instr(lower(json_extract(definition_json,'$.projectDir')),lower(?))>0)`;
     const params = [query.enabled, query.enabled === "enabled" ? 1 : 0, query.search, query.search, query.search];
     return this.db.transaction(() => ({
       ...query, total: Number(this.db.connection.prepare(`SELECT count(*) AS n FROM tasks WHERE ${where}`).get(...params)!.n),
-      items: this.db.connection.prepare(`SELECT * FROM tasks WHERE ${where} ORDER BY id LIMIT ? OFFSET ?`).all(...params, query.limit, query.offset)
+      items: this.db.connection.prepare(`SELECT * FROM tasks WHERE ${where} ORDER BY julianday(created_at) IS NULL, julianday(created_at) ${query.sort === "created_asc" ? "ASC" : "DESC"}, id ASC LIMIT ? OFFSET ?`).all(...params, query.limit, query.offset)
         .map((row) => { const { promptSnapshot: _prompt, ...task } = readStoredTask(row); return task; }),
     }));
   }
@@ -52,6 +53,21 @@ export class SqliteTaskRepository implements TaskRepository {
 
   async create(task: TaskDefinition, prompt: string): Promise<StoredTask> {
     return this.db.transaction(() => this.insert(task, prompt));
+  }
+
+  async createGenerated(task: Omit<TaskDefinition, "id">, prompt: string, requestId: string): Promise<StoredTask> {
+    if (!/^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/.test(requestId)) throw new AppError("INVALID_ARGUMENT", "任务创建请求标识无效。");
+    const fingerprint = promptHash(JSON.stringify([task, prompt]));
+    return this.db.transaction(() => {
+      const previous = this.db.connection.prepare("SELECT task_id, fingerprint FROM task_create_requests WHERE request_id=?").get(requestId);
+      if (previous) {
+        if (previous.fingerprint !== fingerprint) throw new AppError("TASK_CREATE_CONFLICT", "同一创建请求不能保存不同内容，请核对已有任务。");
+        return readStoredTask(this.db.connection.prepare("SELECT * FROM tasks WHERE id=?").get(String(previous.task_id))!);
+      }
+      const saved = this.insert({ ...task, id: randomUUID() }, prompt);
+      this.db.connection.prepare("INSERT INTO task_create_requests VALUES(?,?,?)").run(requestId, saved.id, fingerprint);
+      return saved;
+    });
   }
 
   /** Called only inside the store's transaction for atomic batch import. */

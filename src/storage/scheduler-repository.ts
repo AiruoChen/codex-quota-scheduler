@@ -3,6 +3,7 @@ import type { Clock } from "../domain/ports.js";
 import type { MonitorUpdate } from "../domain/monitor.js";
 import type { DispatchDecision, SchedulerRepository, SchedulerStatus, SchedulerTrigger } from "../domain/scheduler.js";
 import type { TaskRun } from "../domain/task.js";
+import type { QuotaSnapshot } from "../domain/quota.js";
 import { evaluateQuota, hasQuotaIdentity } from "../domain/quota-policy.js";
 import { digest, type MonitorOptions } from "../monitor/recognize.js";
 import { AppError } from "../shared/errors.js";
@@ -12,6 +13,8 @@ import { readMonitorEvent, readMonitorState } from "./monitor-repository.js";
 import { readRun, SqliteRunRepository } from "./run-repository.js";
 import { readStoredTask } from "./task-repository.js";
 import { assertRecoveryClear, recoveryEvent } from "./recovery-repository.js";
+import { continuationReady } from "../domain/continuation.js";
+import { readInterruption } from "./continuation-repository.js";
 
 export class SqliteSchedulerRepository implements SchedulerRepository {
   private readonly context: string;
@@ -34,6 +37,7 @@ export class SqliteSchedulerRepository implements SchedulerRepository {
       if (!task.enabled) throw new AppError("TASK_DISABLED", "停用任务不能加入自动队列。");
       const run = new SqliteRunRepository(this.db, this.clock).insert(taskId);
       this.db.connection.prepare("INSERT INTO scheduler_queue(run_id,task_id,task_revision) VALUES (?,?,?)").run(run.id, taskId, task.revision);
+      this.db.connection.prepare("INSERT INTO queue_positions(run_id) VALUES (?)").run(run.id);
       this.execution.event(run.id, "scheduler_enqueued", { revision: task.revision });
       return run;
     });
@@ -41,7 +45,7 @@ export class SqliteSchedulerRepository implements SchedulerRepository {
 
   remove(id: string): TaskRun {
     return this.db.transaction(() => {
-      if (!this.db.connection.prepare("SELECT run_id FROM scheduler_queue WHERE run_id=?").get(id)) throw new AppError("QUEUE_NOT_FOUND", "运行记录不属于自动队列。");
+      if (!this.db.connection.prepare("SELECT run_id FROM dispatch_queue WHERE run_id=?").get(id)) throw new AppError("QUEUE_NOT_FOUND", "运行记录不属于自动队列。");
       const run = this.run(id);
       if (!["queued", "waiting_quota"].includes(run.status)) throw new AppError("RUN_ALREADY_STARTED", "只能移除尚未提交的排队记录；运行中请使用 runs cancel。");
       const next = { ...run, status: "cancelled" as const, completedAt: this.clock.now().toISOString() };
@@ -62,10 +66,10 @@ export class SqliteSchedulerRepository implements SchedulerRepository {
     return { paused: control.paused === 1, reason: control.reason === null ? null : String(control.reason),
       worker: worker ? { pid: Number(worker.owner_pid), startedAt: String(worker.started_at), trigger: worker.trigger_mode as SchedulerTrigger } : null,
       attention: this.attention(), queue: this.db.connection.prepare(`SELECT r.data_json,q.sequence,t.definition_json,t.deleted_at
-        FROM scheduler_queue q JOIN runs r ON r.id=q.run_id LEFT JOIN tasks t ON t.id=q.task_id ORDER BY q.sequence`).all().map((row) => {
+        FROM dispatch_queue q JOIN runs r ON r.id=q.run_id LEFT JOIN tasks t ON t.id=q.task_id ORDER BY q.sequence`).all().map((row) => {
         const run = readRun(row.data_json);
         return { runId: run.id, taskId: run.taskId, revision: run.taskRevision, status: run.status, priority: run.taskSnapshot.priority,
-          name: run.taskSnapshot.name, projectDir: run.taskSnapshot.projectDir, createdAt: run.createdAt, sequence: Number(row.sequence),
+          name: run.taskSnapshot.name, projectDir: run.taskSnapshot.projectDir, createdAt: run.createdAt, sequence: Number(row.sequence), ...(run.continuation ? { continuation: run.continuation } : {}),
           enabled: row.definition_json && row.deleted_at === null ? (JSON.parse(String(row.definition_json)) as { enabled: boolean }).enabled : null };
       }) };
   }
@@ -157,11 +161,22 @@ export class SqliteSchedulerRepository implements SchedulerRepository {
         if (this.trigger === "refresh" && assigned !== null && assigned !== run.id) continue;
         const row = this.db.connection.prepare("SELECT * FROM tasks WHERE id=? AND deleted_at IS NULL").get(run.taskId);
         if (!row || !readStoredTask(row).enabled || !run.taskSnapshot.enabled) continue;
+        if (run.continuation) {
+          const plan = this.db.connection.prepare("SELECT evidence_json FROM continuation_plans WHERE child_run_id=?").get(run.id);
+          if (!plan || this.db.connection.prepare("SELECT stopped FROM continuation_chains WHERE root_run_id=?").get(run.continuation.rootRunId)?.stopped !== 0) continue;
+          const evidence = readInterruption(plan.evidence_json);
+          const origin = this.db.connection.prepare("SELECT data_json FROM execution_origins WHERE run_id=?").get(run.continuation.parentRunId);
+          const account = origin ? (JSON.parse(String(origin.data_json)) as { account: QuotaSnapshot["account"] }).account : null;
+          if (!account || !(["type", "email", "planType", "workspaceId"] as const).every(key => account[key] === snapshot.account![key])) {
+            this.pause("continuation_account_changed"); return { action: "wait", reason: "identity_unknown" };
+          }
+          if (!continuationReady(evidence, snapshot, this.policy, this.clock.now())) continue;
+        }
         if (run.turnId || this.db.connection.prepare("SELECT sequence FROM execution_events WHERE run_id=? AND type='submission_started'").get(run.id)) {
           this.db.connection.prepare("UPDATE runs SET data_json=? WHERE id=?").run(JSON.stringify({ ...run, status: "needs_attention", error: "SUBMISSION_STATE_UNKNOWN: 请核对提交记录，不会自动重发。" }), run.id);
           this.pause("needs_attention"); return { action: "wait", reason: "needs_attention" };
         }
-        const claimed = this.execution.claimInside(run.id);
+        const claimed = this.execution.claimInside(run.id, true);
         if (this.trigger === "refresh") this.db.connection.prepare("UPDATE scheduler_streams SET run_id=? WHERE context_key=?").run(run.id, this.context);
         this.execution.event(run.id, "scheduler_claimed", { trigger: this.trigger, grantKey: this.trigger === "refresh" ? grant : null });
         return { action: "run", run: claimed, expectedAccount: snapshot.account };
@@ -174,7 +189,8 @@ export class SqliteSchedulerRepository implements SchedulerRepository {
     return this.db.transaction(() => {
       this.assertWorker(token);
       const run = this.run(id);
-      if (run.status !== "succeeded" && run.status !== "waiting_quota") this.pause(`run_${run.status}`);
+      const planned = run.status === "failed" && this.db.connection.prepare("SELECT child_run_id FROM continuation_plans WHERE parent_run_id=?").get(id);
+      if (run.status !== "succeeded" && run.status !== "waiting_quota" && !planned) this.pause(`run_${run.status}`);
       return run;
     });
   }
@@ -189,7 +205,7 @@ export class SqliteSchedulerRepository implements SchedulerRepository {
     return readRun(row.data_json);
   }
   private queued(): TaskRun[] {
-    return this.db.connection.prepare("SELECT r.data_json FROM scheduler_queue q JOIN runs r ON r.id=q.run_id ORDER BY q.sequence").all().map((row) => readRun(row.data_json));
+    return this.db.connection.prepare("SELECT r.data_json FROM dispatch_queue q JOIN runs r ON r.id=q.run_id ORDER BY q.sequence").all().map((row) => readRun(row.data_json));
   }
 }
 
@@ -204,9 +220,17 @@ export function checkSchedulerStorage(db: Database): void {
     if (!Number.isSafeInteger(row.owner_pid) || Number(row.owner_pid) <= 0 || typeof row.token !== "string" || !row.token
       || typeof row.stream_key !== "string" || !validDate(row.started_at) || !["available", "refresh"].includes(String(row.trigger_mode))) invalid();
   }
-  for (const row of db.connection.prepare("SELECT q.*,r.data_json FROM scheduler_queue q JOIN runs r ON r.id=q.run_id").all()) {
+  for (const row of db.connection.prepare("SELECT q.*,r.data_json FROM dispatch_queue q JOIN runs r ON r.id=q.run_id").all()) {
     const run = readRun(row.data_json);
     if (row.task_id !== run.taskId || row.task_revision !== run.taskRevision) invalid();
+  }
+  const count = (table: string) => Number(db.connection.prepare(`SELECT count(*) AS n FROM ${table}`).get()!.n);
+  if (count("dispatch_queue") !== count("scheduler_queue") + count("continuation_queue")) invalid();
+  for (const row of db.connection.prepare("SELECT * FROM continuation_plans").all()) {
+    const evidence = readInterruption(row.evidence_json), child = db.connection.prepare("SELECT data_json FROM runs WHERE id=?").get(row.child_run_id!);
+    const run = child ? readRun(child.data_json) : null;
+    if (!run?.continuation || run.continuation.parentRunId !== row.parent_run_id || run.continuation.rootRunId !== row.root_run_id
+      || JSON.stringify(run.continuation.evidence) !== JSON.stringify(evidence)) invalid();
   }
   for (const row of db.connection.prepare("SELECT * FROM scheduler_streams").all()) {
     if (!Number.isSafeInteger(row.cursor) || Number(row.cursor) < 0 || !nullableText(row.identity) || !nullableText(row.grant_key)

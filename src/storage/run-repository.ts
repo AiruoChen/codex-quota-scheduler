@@ -4,6 +4,7 @@ import type { RunUpdate, TaskRun, TaskStatus, RunQuery, RunPage } from "../domai
 import { AppError } from "../shared/errors.js";
 import type { Database } from "./database.js";
 import { definitionOf, promptHash, readStoredTask } from "./task-repository.js";
+import { isQuotaInterruption } from "../domain/continuation.js";
 
 const transitions: Record<TaskStatus, readonly TaskStatus[]> = {
   queued: ["queued", "waiting_quota", "running", "cancelled", "needs_attention"],
@@ -25,6 +26,11 @@ export function readRun(value: unknown): TaskRun {
       || !Number.isFinite(Date.parse(run.createdAt))
       || ![run.startedAt, run.completedAt].every((time) => time === null || typeof time === "string" && Number.isFinite(Date.parse(time)))) throw new Error("Invalid run");
     definitionOf(run.taskSnapshot);
+    if (run.continuation && (!Number.isSafeInteger(run.continuation.attempt) || run.continuation.attempt < 1 || run.continuation.attempt > 20
+      || ![run.continuation.rootRunId, run.continuation.parentRunId, run.continuation.parentTurnId].every(value => typeof value === "string" && value.length > 0)
+      || ![run.continuation.connectionKey, run.continuation.accountScope].every(value => typeof value === "string" && /^[a-f0-9]{64}$/.test(value))
+      || !isQuotaInterruption(run.continuation.evidence) || run.continuation.evidence.turnId !== run.continuation.parentTurnId
+      || run.continuation.evidence.connectionKey !== run.continuation.connectionKey || run.continuation.evidence.accountScope !== run.continuation.accountScope)) throw new Error("Invalid continuation");
     return run;
   } catch { throw new AppError("STORAGE_INVALID", "运行记录格式或指令校验和异常，请检查备份。"); }
 }
@@ -86,23 +92,26 @@ export class SqliteRunRepository implements RunRepository {
   }
 
   async update(id: string, update: RunUpdate, expectedStatus: TaskStatus): Promise<TaskRun> {
-    return this.db.transaction(() => {
-      const row = this.db.connection.prepare("SELECT data_json FROM runs WHERE id=?").get(id);
-      if (!row) throw new AppError("RUN_NOT_FOUND", "运行记录不存在。");
-      const run = readRun(row.data_json);
-      if (run.status !== expectedStatus) throw new AppError("RUN_CONFLICT", "运行状态已变化，请重新读取后重试。");
-      if (!transitions[run.status].includes(update.status)) throw new AppError("RUN_TRANSITION", "不允许此运行状态转换。");
-      // Copy only mutable fields; task and prompt snapshots are immutable.
-      const next: TaskRun = { ...run, status: update.status };
-      for (const key of ["startedAt", "completedAt", "threadId", "turnId", "output", "error"] as const) {
-        if (update[key] !== undefined) Object.assign(next, { [key]: update[key] });
-      }
-      if (next.status === "running" && next.startedAt === null) next.startedAt = this.clock.now().toISOString();
-      if (["succeeded", "failed", "cancelled"].includes(next.status) && next.completedAt === null) next.completedAt = this.clock.now().toISOString();
-      try { readRun(JSON.stringify(next)); }
-      catch { throw new AppError("RUN_INVALID", "运行状态更新包含无效数据。"); }
-      this.db.connection.prepare("UPDATE runs SET data_json=? WHERE id=?").run(JSON.stringify(next), id);
-      return next;
-    });
+    return this.db.transaction(() => this.updateInside(id, update, expectedStatus));
+  }
+
+  /** Shared by atomic terminal-result and continuation-plan persistence. */
+  updateInside(id: string, update: RunUpdate, expectedStatus: TaskStatus): TaskRun {
+    const row = this.db.connection.prepare("SELECT data_json FROM runs WHERE id=?").get(id);
+    if (!row) throw new AppError("RUN_NOT_FOUND", "运行记录不存在。");
+    const run = readRun(row.data_json);
+    if (run.status !== expectedStatus) throw new AppError("RUN_CONFLICT", "运行状态已变化，请重新读取后重试。");
+    if (!transitions[run.status].includes(update.status)) throw new AppError("RUN_TRANSITION", "不允许此运行状态转换。");
+    // Copy only mutable fields; task and prompt snapshots are immutable.
+    const next: TaskRun = { ...run, status: update.status };
+    for (const key of ["startedAt", "completedAt", "threadId", "turnId", "output", "error"] as const) {
+      if (update[key] !== undefined) Object.assign(next, { [key]: update[key] });
+    }
+    if (next.status === "running" && next.startedAt === null) next.startedAt = this.clock.now().toISOString();
+    if (["succeeded", "failed", "cancelled"].includes(next.status) && next.completedAt === null) next.completedAt = this.clock.now().toISOString();
+    try { readRun(JSON.stringify(next)); }
+    catch { throw new AppError("RUN_INVALID", "运行状态更新包含无效数据。"); }
+    this.db.connection.prepare("UPDATE runs SET data_json=? WHERE id=?").run(JSON.stringify(next), id);
+    return next;
   }
 }

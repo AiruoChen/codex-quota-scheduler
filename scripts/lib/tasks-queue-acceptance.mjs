@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 
 /** Concurrent writers are synthetic API calls in the owned smoke profile. */
-export async function tasksQueueAcceptance(page) {
-  const { evaluate, wait } = page;
+export async function tasksQueueAcceptance(page, taskId) {
+  const evaluate = source => page.evaluate(source.replaceAll("gui-smoke", taskId));
+  const wait = source => page.wait(source.replaceAll("gui-smoke", taskId));
   await page.call("Page.bringToFront");
   assert.deepEqual(await evaluate("Object.keys(window.desktopProject)"), ["chooseDirectory"]);
   await evaluate("location.hash='#tasks'");

@@ -4,6 +4,12 @@ export interface QuotaPolicy {
   limitId: string;
   quotaMaxAgeMs: number;
   reservePercent: number;
+  quotaReserves?: { fiveHour?: number; weekly?: number };
+}
+
+export function reserveForWindow(policy: QuotaPolicy, durationMinutes: number | null): number {
+  return durationMinutes === 300 ? policy.quotaReserves?.fiveHour ?? policy.reservePercent
+    : durationMinutes === 10080 ? policy.quotaReserves?.weekly ?? policy.reservePercent : policy.reservePercent;
 }
 
 export type QuotaAvailability =
@@ -28,7 +34,7 @@ export function evaluateQuota(snapshot: QuotaSnapshot, policy: QuotaPolicy, now:
     if (window.durationMinutes === null || window.durationMinutes <= 0 || remaining === null || !Number.isFinite(remaining)
       || remaining < 0 || remaining > 100 || window.resetsAt !== null && !(Date.parse(window.resetsAt) > now.getTime())) unknown = true;
     if (remaining !== null && remaining <= 0) return { status: "blocked", reason: "quota_exhausted" };
-    if (remaining !== null && remaining <= policy.reservePercent) reserve = true;
+    if (remaining !== null && remaining <= reserveForWindow(policy, window.durationMinutes)) reserve = true;
   }
   if (unknown) return { status: "unknown", reason: "unknown_quota" };
   if (reserve) return { status: "blocked", reason: "reserve_reached" };

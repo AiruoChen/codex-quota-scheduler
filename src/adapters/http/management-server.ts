@@ -87,11 +87,12 @@ export async function serveManagement(service: ManagementService, options: Serve
       if (request.method === "GET") {
         const store = await service.app.storage();
         const id = url.searchParams.get("id") ?? "";
-        if (path === "/api/bootstrap") return reply(response, 200, { csrf });
+        if (path === "/api/bootstrap") return reply(response, 200, { csrf, viewScope: service.viewScope() });
         if (path === "/api/state") return reply(response, 200, await service.state());
         if (path === "/api/tasks") return reply(response, 200, await service.tasks());
         if (path === "/api/tasks/page") return reply(response, 200, await store.tasks.query({ search: url.searchParams.get("search") ?? "",
           enabled: (url.searchParams.get("enabled") ?? "all") as "all" | "enabled" | "disabled",
+          sort: (url.searchParams.get("sort") ?? "created_desc") as "created_desc" | "created_asc",
           offset: Number(url.searchParams.get("offset") ?? 0), limit: Number(url.searchParams.get("limit") ?? 25) }));
         if (path === "/api/task") {
           const task = await store.tasks.get(id);
@@ -112,8 +113,9 @@ export async function serveManagement(service: ManagementService, options: Serve
             cancelRequested: store.execution.cancelled(id),
             origin: target.origin ? { account: maskAccount(target.origin.account.email), cliVersion: target.origin.cliVersion } : null });
         }
-        if (path === "/api/config") return reply(response, 200, { active: service.config, saved: await new ConfigManager(service.configPath).show() });
+        if (path === "/api/config") return reply(response, 200, { active: service.config, ...await new ConfigManager(service.configPath).snapshot() });
         if (path === "/api/diagnostics") return reply(response, 200, await service.diagnostics());
+        if (path.startsWith("/api/catalog/")) return reply(response, 200, await service.catalog(path.slice("/api/catalog/".length), url.searchParams));
         if (path === "/api/logs") return reply(response, 200, { text: options.logger.tail() });
       }
       if (request.method === "POST" && path === "/api/action") {

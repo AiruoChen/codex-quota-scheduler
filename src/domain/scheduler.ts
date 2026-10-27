@@ -9,7 +9,8 @@ export interface SchedulerStatus {
   worker: { pid: number; startedAt: string; trigger: SchedulerTrigger } | null;
   attention: string[];
   queue: { runId: string; taskId: string; revision: number; status: TaskRun["status"]; priority: number;
-    name: string; projectDir: string; createdAt: string; sequence: number; enabled: boolean | null }[];
+    name: string; projectDir: string; createdAt: string; sequence: number; enabled: boolean | null;
+    continuation?: import("./continuation.js").ContinuationLink }[];
 }
 export type DispatchDecision = { action: "wait"; reason: string }
   | { action: "run"; run: TaskRun; expectedAccount: NonNullable<QuotaSnapshot["account"]> };

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -9,6 +9,8 @@ import { loadConfig } from "../src/config/load.js";
 import type { TaskDefinition } from "../src/domain/task.js";
 import { ManualExecutionService } from "../src/executor/manual-service.js";
 import { SqliteStore } from "../src/storage/sqlite-store.js";
+import { checkResumeCompatibility } from "../src/adapters/codex/resume-check.js";
+import { codexConnectionKey } from "../src/adapters/codex/connection-key.js";
 
 async function setup(scenario = "success", taskPatch: Partial<TaskDefinition> = {}) {
   const dir = await mkdtemp(join(tmpdir(), "execution 中文 &-"));
@@ -131,6 +133,84 @@ for (const scenario of ["success", "wrong-project", "busy-thread"]) {
     } finally { await env.cleanup(); }
   });
 }
+
+for (const [scenario, reason] of [["resume-reject-missing", "thread_history_missing"], ["resume-reject-capability", "capability_required"], ["resume-reject-unknown", "unknown"]] as const) {
+  test(`${scenario}：落盘固定 RPC 诊断，不重试恢复、不提交且不扩大权限`, async () => {
+    const env = await setup(scenario, { session: { mode: "resume", threadId: "thread-1" } });
+    try {
+      const run = await env.service.runTask("one", new AbortController().signal);
+      assert.equal(run.status, "failed"); assert.equal(run.threadId, null); assert.equal(run.turnId ?? null, null);
+      const events = env.store.execution.events(run.id);
+      const diagnostic = events.find(event => event.type === "codex_rpc_error")?.data;
+      assert.equal(diagnostic?.reason, reason); assert.equal(diagnostic?.method, "thread/resume");
+      assert.equal(diagnostic?.cliVersion, "0.160.0-fixture");
+      assert.ok(run.error!.includes(String(diagnostic?.diagnosticId)));
+      const saved = JSON.stringify([run, events]);
+      for (const secret of ["private-debug-secret", "PRIVATE_TOKEN", "PRIVATE_RPC_BODY", "private-fixture-path", "fixture.invalid"]) assert.ok(!saved.includes(secret));
+      const trace = (await readFile(env.trace, "utf8")).trim().split("\n").map(line => JSON.parse(line));
+      assert.equal(trace.filter(row => row.method === "thread/resume").length, 1);
+      assert.equal(trace.some(row => row.method === "turn/start" || row.method === "turn/interrupt"), false);
+      assert.equal(trace.find(row => row.method === "initialize").params.capabilities, undefined);
+      assert.equal(trace.find(row => row.method === "thread/resume").params.sandbox, "read-only");
+      await assert.rejects(env.service.start(run.id, new AbortController().signal), { code: "RUN_ALREADY_STARTED" });
+    } finally { await env.cleanup(); }
+  });
+}
+
+test("提交入口 RPC 被拒绝仍保留 needs_attention，诊断分类不能放松提交互斥或触发重发", async () => {
+  const env = await setup("submit-reject");
+  try {
+    const run = await env.service.runTask("one", new AbortController().signal);
+    assert.equal(run.status, "needs_attention");
+    assert.equal(env.store.execution.events(run.id).find(event => event.type === "codex_rpc_error")?.data.stage, "submit_turn");
+    assert.ok(!JSON.stringify([run, env.store.execution.events(run.id)]).includes("PRIVATE_SUBMISSION_BODY"));
+    await assert.rejects(env.service.start(run.id, new AbortController().signal), { code: "RUN_ALREADY_STARTED" });
+  } finally { await env.cleanup(); }
+});
+
+for (const scenario of ["success", "wrong-project", "account-change", "history-method-missing"]) test(`只读续接兼容检查 ${scenario}：不恢复、不选择最新回合、不写运行状态`, async () => {
+  const env = await setup(scenario, { session: { mode: "resume", threadId: "thread-1" } });
+  try {
+    const run = await env.store.runs.create("one");
+    const target = { run, origin: { connectionKey: codexConnectionKey(env.config.codex), account: { type: "chatgpt" as const, email: "user@example.test", planType: "plus", workspaceId: null }, cliVersion: "0.160.0-fixture" } };
+    const report = await checkResumeCompatibility(env.config.codex, target);
+    assert.equal(report.result, scenario === "success" ? "read_only_checks_passed" : "blocked");
+    assert.equal(report.resumeVerified, false); assert.equal(report.permissionsVerified, false);
+    assert.deepEqual(await env.store.runs.get(run.id), run);
+    assert.deepEqual(env.store.execution.events(run.id), []);
+    assert.equal(env.store.database.connection.prepare("SELECT count(*) AS count FROM execution_lock").get()?.count, 0);
+    for (const privateValue of [env.dir, run.id, "thread-1", "user@example.test", "PRIVATE_HISTORY_BODY", "persisted instruction"]) assert.ok(!JSON.stringify(report).includes(privateValue));
+    const trace = (await readFile(env.trace, "utf8")).trim().split("\n").map(line => JSON.parse(line));
+    assert.ok(trace.every(row => ["initialize", "initialized", "account/read", "thread/read", "thread/turns/list", "thread/items/list"].includes(row.method)));
+    assert.equal(trace.find(row => row.method === "thread/turns/list")?.params.sortDirection, scenario === "wrong-project" ? undefined : "asc");
+    assert.equal((await checkResumeCompatibility({ ...env.config.codex, home: join(env.dir, "other-home") }, target)).errorCode, "CONNECTION_MISMATCH");
+  } finally { await env.cleanup(); }
+});
+
+test("只读诊断命令使用准确运行及已记录来源，不迁移或写入业务数据库，不接受任意 RPC 参数", async () => {
+  const env = await setup("success", { session: { mode: "resume", threadId: "thread-1" } });
+  try {
+    const run = env.store.execution.claimNew("one");
+    env.store.execution.origin(run.id, { connectionKey: codexConnectionKey(env.config.codex), account: { type: "chatgpt", email: "user@example.test", planType: "plus", workspaceId: null }, cliVersion: "0.160.0-fixture" });
+    await env.store.runs.update(run.id, { status: "failed", error: "SYNTHETIC_FAILURE" }, "running");
+    env.store.execution.release(run.id);
+    const before = await env.store.runs.get(run.id);
+    const configPath = join(env.dir, "diagnostic-config.json");
+    await writeFile(configPath, JSON.stringify(env.config));
+    const args = ["--experimental-sqlite", resolve("scripts/diagnose-resume.mjs"), "--config", configPath, "--run", run.id];
+    const processResult = spawnSync(process.execPath, args, { encoding: "utf8", timeout: 10000, windowsHide: true });
+    assert.equal(processResult.status, 0, processResult.stderr);
+    const report = JSON.parse(processResult.stdout);
+    assert.equal(report.result, "read_only_checks_passed"); assert.equal(report.resumeVerified, false);
+    for (const secret of [env.dir, run.id, "thread-1", "user@example.test", "PRIVATE_HISTORY_BODY"]) assert.ok(!processResult.stdout.includes(secret));
+    assert.deepEqual(await env.store.runs.get(run.id), before);
+    assert.deepEqual(env.store.execution.events(run.id), []);
+    const denied = spawnSync(process.execPath, [...args, "--rpc", "thread/resume"], { encoding: "utf8", timeout: 10000, windowsHide: true });
+    assert.equal(denied.status, 1); assert.equal(JSON.parse(denied.stdout).errorCode, "RESUME_CHECK_INPUT_OR_STORAGE_INVALID");
+    const trace = (await readFile(env.trace, "utf8")).trim().split("\n").map(line => JSON.parse(line));
+    assert.ok(trace.every(row => ["initialize", "initialized", "account/read", "thread/read", "thread/turns/list", "thread/items/list"].includes(row.method)));
+  } finally { await env.cleanup(); }
+});
 
 test("停用任务不能启动；queued 取消不会调用执行器", async () => {
   const env = await setup();

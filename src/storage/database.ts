@@ -4,6 +4,9 @@ import { DatabaseSync } from "node:sqlite";
 import { AppError } from "../shared/errors.js";
 import { localProcesses } from "../shared/process.js";
 
+export const dispatchQueueView = `CREATE VIEW dispatch_queue AS SELECT p.sequence,q.run_id,q.task_id,q.task_revision FROM scheduler_queue q JOIN queue_positions p ON p.run_id=q.run_id
+     UNION ALL SELECT p.sequence,q.run_id,q.task_id,q.task_revision FROM continuation_queue q JOIN queue_positions p ON p.run_id=q.run_id`;
+
 export const migrations = [
   `CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;
    CREATE TABLE tasks (
@@ -48,6 +51,15 @@ export const migrations = [
    CREATE TABLE recovery_events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT REFERENCES runs(id), created_at TEXT NOT NULL, type TEXT NOT NULL, data_json TEXT NOT NULL) STRICT;
    CREATE INDEX recovery_events_by_run ON recovery_events(run_id, sequence);`,
   `INSERT OR IGNORE INTO metadata VALUES ('database_identity',lower(hex(randomblob(16))));`,
+  `CREATE TABLE task_create_requests (request_id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id), fingerprint TEXT NOT NULL) STRICT;`,
+  `CREATE TABLE continuation_chains (root_run_id TEXT PRIMARY KEY REFERENCES runs(id), stopped INTEGER NOT NULL DEFAULT 0 CHECK(stopped IN (0,1))) STRICT;
+   CREATE TABLE continuation_plans (parent_run_id TEXT PRIMARY KEY REFERENCES runs(id), root_run_id TEXT NOT NULL REFERENCES runs(id),
+     child_run_id TEXT NOT NULL UNIQUE REFERENCES runs(id), evidence_json TEXT NOT NULL) STRICT;
+   CREATE TABLE queue_positions (sequence INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL UNIQUE REFERENCES runs(id)) STRICT;
+   INSERT INTO queue_positions(run_id) SELECT run_id FROM scheduler_queue ORDER BY sequence;
+   CREATE TABLE continuation_queue (run_id TEXT PRIMARY KEY REFERENCES runs(id), parent_run_id TEXT NOT NULL UNIQUE REFERENCES runs(id),
+     task_id TEXT NOT NULL REFERENCES tasks(id), task_revision INTEGER NOT NULL) STRICT;
+   ${dispatchQueueView};`,
 ];
 
 export class Database {

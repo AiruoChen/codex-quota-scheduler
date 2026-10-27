@@ -15,8 +15,20 @@ export function settingsView(context: UiContext) {
     $("active-config").textContent = JSON.stringify(config.active, null, 2);
     $("config-difference").textContent = JSON.stringify(config.active) === JSON.stringify(config.saved) ? "配置已生效" : "存在待重启配置";
     fill(); await logs();
+    for (const [id, value] of [["reserve-five-hour", config.saved.quotaReserves?.fiveHour ?? config.saved.reservePercent], ["reserve-weekly", config.saved.quotaReserves?.weekly ?? config.saved.reservePercent]] as const) $<HTMLInputElement>(id).value = String(value);
+    $("reserve-active").textContent = `当前生效：五小时 ${config.active.quotaReserves?.fiveHour ?? config.active.reservePercent}% · 周 ${config.active.quotaReserves?.weekly ?? config.active.reservePercent}%`;
   }
   $("config-key").addEventListener("change", fill);
+  $("reserve-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const fiveHour = $<HTMLInputElement>("reserve-five-hour").value, weekly = $<HTMLInputElement>("reserve-weekly").value;
+    if (!fiveHour || !weekly || !config) return;
+    void busy($<HTMLButtonElement>("reserve-save"), async () => {
+      await context.act("quota-reserves-save", { fiveHour: Number(fiveHour), weekly: Number(weekly), revision: config!.revision }, "两项保留线已整体保存。重启后台后生效，队列保持暂停。");
+      await load();
+    });
+  });
+  $("reserve-defaults").onclick = () => { $<HTMLInputElement>("reserve-five-hour").value = "10"; $<HTMLInputElement>("reserve-weekly").value = "10"; };
   const form = $<HTMLFormElement>("config-form");
   form.addEventListener("submit", (event) => {
     event.preventDefault();

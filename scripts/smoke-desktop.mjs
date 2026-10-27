@@ -72,7 +72,7 @@ try {
   checkpoint = "gui-framework";
   const gui = await guiAcceptance(pageDebugger, artifacts, (step) => { checkpoint = step; });
   checkpoint = "tasks-and-queue";
-  const tasksQueue = await tasksQueueAcceptance(pageDebugger);
+  const tasksQueue = await tasksQueueAcceptance(pageDebugger, gui.taskId);
   const controlPage = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find((target) => target.url.endsWith("/startup.html"));
   assert.ok(controlPage, "Lifecycle control page exists");
   controlDebugger = await desktopDebugger(controlPage.webSocketDebuggerUrl);
@@ -80,7 +80,7 @@ try {
   await controlDebugger.evaluate("window.desktopLifecycle.command('show')");
   await wait("document.visibilityState === 'visible' && document.hasFocus()");
   checkpoint = "runs-and-recovery";
-  const runsRecovery = await runsRecoveryAcceptance(pageDebugger, artifacts);
+  const runsRecovery = await runsRecoveryAcceptance(pageDebugger, artifacts, gui.taskId);
   const image = await call("Page.captureScreenshot", { format: "png" });
   await writeFile(join(artifacts, "overview.png"), Buffer.from(image.data, "base64"));
   const record = await readInstance(configPath);

@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdir, mkdtemp, rm, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { CodexCatalog } from "../src/adapters/codex/catalog.js";
 import { loadConfig } from "../src/config/load.js";
 import { resolveTaskTarget } from "../src/management/task-target.js";
 import { realpath } from "node:fs/promises";
+import { parseSidebarState, readSidebarState } from "../src/adapters/codex/sidebar-state.js";
+import { sidebarFixture } from "./fixtures/sidebar-state.js";
 
 async function setup(scenario = "catalog-paged") {
   const dir = await mkdtemp(join(tmpdir(), "catalog-fixture-")); await mkdir(join(dir, "second"));
@@ -55,4 +57,60 @@ test("U01: account changes during catalog reads discard the whole response", asy
   const env = await setup("account-change");
   try { await assert.rejects(env.catalog.models(), { code: "CATALOG_SCOPE_CHANGED" }); }
   finally { await env.cleanup(); }
+});
+
+test("U03 regression: projects can exist while every chat is officially unassigned; all-chat lookup remains usable", async () => {
+  const env = await setup("catalog-unassigned");
+  try {
+    const projects = await env.catalog.projects(); assert.ok(projects.items.length);
+    assert.equal((await env.catalog.threads(projects.items[0]!.id, undefined, projects.scope)).items.length, 0);
+    const all = await env.catalog.threads(undefined, undefined, projects.scope);
+    assert.equal(all.items.length, 3); assert.ok(all.items.every(thread => thread.projectKnown && thread.projectId === null));
+    assert.ok(all.items.some(thread => thread.name === "Named fixture chat"));
+    assert.equal((await env.catalog.threads("none", undefined, projects.scope)).items.length, 3);
+    const trace = (await readFile(env.trace, "utf8")).trim().split("\n").map(line => JSON.parse(line) as { method?: string; params?: Record<string, unknown> });
+    const queries = trace.filter(request => request.method === "thread/list");
+    assert.equal(Object.hasOwn(queries[1]!.params!, "projectId"), false);
+    assert.equal(queries[2]!.params!.projectId, null);
+    assert.ok(queries.every(request => request.params!.useStateDbOnly === true));
+    assert.equal(trace.some(request => ["thread/resume", "thread/start", "turn/start"].includes(request.method ?? "")), false);
+  } finally { await env.cleanup(); }
+});
+
+test("legacy desktop membership bridges server-null projects across empty pages and keeps execution permissions separate", async () => {
+  const env = await setup("catalog-legacy");
+  try {
+    const file = join(env.dir, ".codex-global-state.json"), data = JSON.stringify(sidebarFixture(env.dir)); await writeFile(file, data);
+    const catalog = new CodexCatalog(env.config.codex, options => readSidebarState({ ...options, args: [], home: env.dir }));
+    const scope = (await catalog.projects()).scope;
+    const assigned = await catalog.threads("official-project-1", undefined, scope);
+    assert.equal(assigned.desktopStatus, "ready"); assert.deepEqual(assigned.items.map(item => item.id), ["thread-1"]);
+    assert.equal(assigned.items[0]!.projectId, null); assert.equal(assigned.items[0]!.projectBinding?.projectId, "official-project-1");
+    const first = await catalog.threads(), second = await catalog.threads(undefined, first.nextCursor!, scope);
+    assert.equal(first.items.length, 2); assert.equal(second.items.length, 1); assert.equal(second.nextCursor, null);
+    assert.deepEqual((await catalog.threads("none")).items.map(item => item.id), ["unassigned-thread"]);
+    await assert.rejects(catalog.threads("official-project-1", first.nextCursor!, scope), { code: "CATALOG_CHANGED" });
+    const environment = await catalog.environment("thread-1", scope);
+    assert.equal(environment.sidebarProject?.id, "official-project-1"); assert.equal(environment.sidebarProject?.roots.length, 2);
+    assert.equal(environment.environment.projectId, null); assert.deepEqual(environment.environment.roots, []);
+    assert.equal(environment.environment.permissionsVerified, false); assert.deepEqual(environment.environment.writableRoots, []);
+    assert.equal(await readFile(file, "utf8"), data);
+    const trace = (await readFile(env.trace, "utf8")).trim().split("\n").map(line => JSON.parse(line) as { method?: string; params?: Record<string, unknown> });
+    assert.ok(trace.filter(request => request.method === "thread/list").every(request => !Object.hasOwn(request.params!, "projectId")));
+    assert.equal(trace.some(request => ["thread/resume", "thread/start", "turn/start", "turn/interrupt", "project/update"].includes(request.method ?? "")), false);
+    const changed = sidebarFixture(env.dir); changed["projectless-thread-ids"].push("new-marker"); await writeFile(file, JSON.stringify(changed));
+    await assert.rejects(catalog.threads(undefined, first.nextCursor!, scope), { code: "CATALOG_CHANGED" });
+  } finally { await env.cleanup(); }
+});
+
+test("desktop state changing during a read discards results, while unsupported sources retain the canonical fallback", async () => {
+  const env = await setup("catalog-legacy");
+  try {
+    const state = parseSidebarState(sidebarFixture(env.dir), env.dir); let calls = 0;
+    const changing = new CodexCatalog(env.config.codex, async () => ++calls === 1 ? state : { status: "missing" });
+    await assert.rejects(changing.threads("official-project-1"), { code: "CATALOG_CHANGED" });
+    const fallback = new CodexCatalog(env.config.codex, async () => ({ status: "source_mismatch" }));
+    const page = await fallback.threads("official-project-1"); assert.equal(page.items.length, 0); assert.equal(page.desktopStatus, "source_mismatch");
+    const all = await fallback.threads(); assert.equal(all.items.length, 2); assert.ok(all.items.every(item => !item.projectBinding));
+  } finally { await env.cleanup(); }
 });

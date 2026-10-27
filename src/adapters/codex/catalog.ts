@@ -9,6 +9,8 @@ import { hasQuotaIdentity } from "../../domain/quota-policy.js";
 import { AppError } from "../../shared/errors.js";
 import { isRecord, requireString } from "../../shared/validation.js";
 import type { StdioRpcClient } from "./rpc-client.js";
+import { readSidebarState, type SidebarReader, type SidebarState } from "./sidebar-state.js";
+import { bindSidebarProject, displayedProject, readSidebarCursor, sidebarCursor } from "./sidebar-projects.js";
 
 export const catalogScope = (options: CodexOptions, account: unknown): string => createHash("sha256").update(JSON.stringify([codexConnectionKey(options), account])).digest("hex");
 const text = (value: unknown) => typeof value === "string" && value.length > 0 && value.length <= 4000 ? value : null;
@@ -26,7 +28,25 @@ function thread(value: unknown): ThreadChoice {
 
 /** Experimental opt-in is confined to these verified, read-only catalog methods. No arbitrary RPC forwarding. */
 export class CodexCatalog {
-  constructor(private readonly options: CodexOptions) {}
+  constructor(private readonly options: CodexOptions, private readonly sidebar: SidebarReader = readSidebarState) {}
+  private async verifySidebar(before: SidebarState): Promise<void> {
+    const after = await this.sidebar(this.options);
+    if (before.status !== after.status || before.status === "ready" && (after.status !== "ready" || before.snapshot.revision !== after.snapshot.revision)) {
+      throw new AppError("CATALOG_CHANGED", "桌面项目关联在读取期间发生变化，请重新加载目录。");
+    }
+  }
+  private async liveProjects(client: StdioRpcClient): Promise<Set<string>> {
+    const ids = new Set<string>(), seen = new Set<string>(); let cursor: string | null = null;
+    do {
+      const result = await client.request("project/list", { limit: 100, ...(cursor ? { cursor } : {}) });
+      if (!isRecord(result) || !Array.isArray(result.data)) throw new AppError("CODEX_PROTOCOL_ERROR", "项目关联核对响应无效。");
+      for (const value of result.data) ids.add(project(value).id);
+      cursor = text(result.nextCursor);
+      if (cursor && (seen.has(cursor) || seen.size >= 50)) throw new AppError("CODEX_PROTOCOL_ERROR", "项目关联分页未推进。");
+      if (cursor) seen.add(cursor);
+    } while (cursor);
+    return ids;
+  }
   private async read<T>(operation: (client: StdioRpcClient, scope: string) => Promise<T>, expectedScope?: string): Promise<T> {
     const { client } = await connectCodex(this.options, undefined, true);
     try {
@@ -62,14 +82,31 @@ export class CodexCatalog {
   }
   threads(projectId?: string, cursor?: string, expectedScope?: string): Promise<CatalogPage<ThreadChoice>> {
     return this.read(async (client, scope) => {
-      const result = await client.request("thread/list", { limit: 100, sourceKinds: ["cli", "vscode", "appServer", "exec"], useStateDbOnly: true,
-        ...(projectId && projectId !== "none" ? { projectId } : {}), ...(cursor ? { cursor } : {}) });
-      if (!isRecord(result) || !Array.isArray(result.data)) throw new AppError("CODEX_PROTOCOL_ERROR", "会话列表格式无效。");
-      const items = result.data.map(thread).filter(item => projectId === "none" ? item.projectKnown && item.projectId === null : !projectId || item.projectId === projectId);
-      return { scope, items, nextCursor: text(result.nextCursor) };
+      const state = await this.sidebar(this.options);
+      let after = cursor;
+      if (state.status === "ready") after = cursor ? readSidebarCursor(cursor, scope, projectId, state.snapshot.revision) : undefined;
+      else if (cursor?.startsWith("sidebar-v1:")) throw new AppError("CATALOG_CHANGED", "桌面项目关联已变化，请重新读取第一页。");
+      const live = state.status === "ready" ? await this.liveProjects(client) : new Set<string>();
+      const seen = new Set<string>();
+      let items: ThreadChoice[] = [], next: string | null = null;
+      // Legacy membership is absent from the server filter. Scan empty pages with a fixed bound, preserving its opaque cursor.
+      for (let page = 0; page < 10; page++) {
+        const result = await client.request("thread/list", { limit: 100, sourceKinds: ["cli", "vscode", "appServer", "exec"], useStateDbOnly: true,
+          ...(state.status !== "ready" && projectId ? { projectId: projectId === "none" ? null : projectId } : {}), ...(after ? { cursor: after } : {}) });
+        if (!isRecord(result) || !Array.isArray(result.data)) throw new AppError("CODEX_PROTOCOL_ERROR", "会话列表格式无效。");
+        const current = result.data.map(thread).map(item => state.status === "ready" ? bindSidebarProject(item, state.snapshot, live) : item);
+        items = current.filter(item => !projectId || displayedProject(item) === (projectId === "none" ? null : projectId));
+        next = text(result.nextCursor);
+        if (next && (next === after || seen.has(next))) throw new AppError("CODEX_PROTOCOL_ERROR", "会话分页未推进，请重新读取。");
+        if (next) seen.add(next);
+        if (items.length || !next || !projectId || state.status !== "ready") break;
+        after = next;
+      }
+      await this.verifySidebar(state);
+      return { scope, items, nextCursor: next && state.status === "ready" ? sidebarCursor(next, scope, projectId, state.snapshot.revision) : next, desktopStatus: state.status };
     }, expectedScope);
   }
-  environment(threadId: string, expectedScope?: string): Promise<{ scope: string; thread: ThreadChoice; environment: ExecutionEnvironment; limitation: string }> {
+  environment(threadId: string, expectedScope?: string): Promise<{ scope: string; thread: ThreadChoice; environment: ExecutionEnvironment; limitation: string; sidebarProject?: ProjectChoice }> {
     return this.read(async (client, scope) => {
       const response = await client.request("thread/read", { threadId, includeTurns: false });
       if (!isRecord(response)) throw new AppError("CODEX_PROTOCOL_ERROR", "会话读取失败。");
@@ -84,7 +121,17 @@ export class CodexCatalog {
         roots = found.roots;
       }
       const cwd = await realpath(selected.cwd);
-      return { scope, thread: selected, environment: { version: 1, mode: "resume", scope, connectionKey: codexConnectionKey(this.options),
+      const state = await this.sidebar(this.options);
+      const enriched = state.status === "ready" ? bindSidebarProject(selected, state.snapshot, await this.liveProjects(client)) : selected;
+      let sidebarProject: ProjectChoice | undefined;
+      if (enriched.projectBinding?.source === "desktop_state" && enriched.projectBinding.status === "assigned" && enriched.projectBinding.projectId) {
+        const result = await client.request("project/read", { projectId: enriched.projectBinding.projectId });
+        if (!isRecord(result)) throw new AppError("CODEX_PROTOCOL_ERROR", "桌面关联项目读取失败。");
+        sidebarProject = project(result.project);
+        if (sidebarProject.id !== enriched.projectBinding.projectId) throw new AppError("THREAD_MISMATCH", "桌面关联项目标识不一致。");
+      }
+      await this.verifySidebar(state);
+      return { scope, thread: enriched, ...(sidebarProject ? { sidebarProject } : {}), environment: { version: 1, mode: "resume", scope, connectionKey: codexConnectionKey(this.options),
         projectId: selected.projectId, projectKnown: selected.projectKnown, roots, cwd, writableRoots: [], permissionsVerified: false },
         limitation: "已读取会话实际目录和项目文件夹；当前只读协议没有完整有效权限，完整环境续接暂不可执行。" };
     }, expectedScope);

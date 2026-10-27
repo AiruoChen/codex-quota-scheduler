@@ -46,6 +46,11 @@ input.on("line", (line) => {
     let threads = [{ id: "named-thread", name: "Named fixture chat", cwd, projectId: "official-project-1" },
       { id: "unassigned-thread", name: "Unassigned fixture chat", cwd, projectId: null }, { id: "unknown-thread", name: null, cwd }];
     if (scenario === "catalog-unassigned") threads = threads.map(thread => ({ ...thread, projectId: null }));
+    if (scenario === "catalog-legacy") {
+      if (message.params.projectId) threads = [];
+      else { result({ data: message.params.cursor ? [{ id: "thread-1", name: "Legacy named chat", cwd, projectId: null }]
+        : [{ id: "unassigned-thread", name: "Unassigned chat", cwd, projectId: null }, { id: "unknown-thread", name: "Unknown assignment", cwd, projectId: null }], nextCursor: message.params.cursor ? null : "legacy-page-2" }); return; }
+    }
     if (Object.hasOwn(message.params, "projectId")) threads = threads.filter(thread => Object.hasOwn(thread, "projectId") && thread.projectId === message.params.projectId);
     result({ data: threads, nextCursor: null }); return;
   }
@@ -65,7 +70,7 @@ input.on("line", (line) => {
   }
   if (message.method === "thread/read") {
     result({ thread: { id: "thread-1", cwd: scenario === "wrong-project" ? cwd + "/other" : cwd,
-      ...(scenario === "catalog-paged" ? { projectId: "official-project-1", name: "Named fixture chat" } : {}),
+      ...(scenario === "catalog-paged" ? { projectId: "official-project-1", name: "Named fixture chat" } : scenario === "catalog-legacy" ? { projectId: null, name: "Legacy named chat" } : {}),
       historyMode: "paginated", ephemeral: false,
       status: { type: ["busy-thread", "continuation-busy"].includes(scenario) ? "active" : "idle" } } });
     return;

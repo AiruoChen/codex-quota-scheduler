@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 
-/** Mirror metadata with missing project assignments, without touching any real account or remote thread. */
+/** Mirror canonical-null and explicit legacy desktop memberships without a real account or remote mutation. */
 export async function catalogAcceptance(page, directory, checkpoint = () => {}) {
   const { call, evaluate, wait } = page, scope = "a".repeat(64);
   const requests = [], failures = [], held = [];
@@ -17,13 +17,15 @@ export async function catalogAcceptance(page, directory, checkpoint = () => {}) 
     if (kind === "projects") response.items = [{ id: "fixture-project", name: "Fixture project", roots: [directory] }];
     if (kind === "threads") {
       const filter = url.searchParams.get("projectId");
-      if (mode === "fail") { status = 503; response = { error: { code: "CATALOG_FIXTURE_UNAVAILABLE", message: "Synthetic catalog unavailable" } }; }
+      if (mode === "legacy") response = { ...response, desktopStatus: "ready", items: [{ ...chat("legacy-chat", "Legacy named chat"),
+        projectBinding: { source: "desktop_state", status: "assigned", projectId: "fixture-project" } }] };
+      else if (mode === "fail") { status = 503; response = { error: { code: "CATALOG_FIXTURE_UNAVAILABLE", message: "Synthetic catalog unavailable" } }; }
       else if (filter === "fixture-project" && mode === "hold") { held.push(event.requestId); return; }
       else if (!filter) response = { ...response, items: url.searchParams.has("cursor") ? [chat("later-chat", "Older named chat")]
         : [chat("existing-chat", "Existing named chat"), chat("unknown-chat", "Unknown assignment chat", false)], nextCursor: url.searchParams.has("cursor") ? null : "page-2" };
       else if (filter === "none") response.items = [chat("existing-chat", "Existing named chat")];
     }
-    if (kind === "environment") response = { scope, environment: { version: 1, mode: "resume", scope, connectionKey: "b".repeat(64),
+    if (kind === "environment") response = { scope, ...(mode === "legacy" ? { sidebarProject: { id: "fixture-project", name: "Fixture desktop project", roots: [directory] } } : {}), environment: { version: 1, mode: "resume", scope, connectionKey: "b".repeat(64),
       projectId: null, projectKnown: true, roots: [], cwd: directory, writableRoots: [], permissionsVerified: false }, limitation: "Synthetic permission remains unverified" };
     void fulfill(event.requestId, response, status).catch(error => failures.push(error));
   });
@@ -69,8 +71,16 @@ export async function catalogAcceptance(page, directory, checkpoint = () => {}) 
     await delay(100); // Let the deliberately delayed response reach the renderer before checking that it was discarded.
     await wait("document.querySelector('[name=projectId]').value==='none' && !document.querySelector('[name=threadId]').disabled");
     assert.equal(await evaluate("document.querySelector('[name=threadId]').options.length"), 2);
+    checkpoint("catalog-desktop-membership"); mode = "legacy";
+    await evaluate("document.querySelector('[name=projectId]').value='fixture-project';document.querySelector('[name=projectId]').dispatchEvent(new Event('change'))");
+    await wait("!document.querySelector('[name=threadId]').disabled && [...document.querySelector('[name=threadId]').options].some(o=>o.textContent.includes('Legacy named chat')&&o.textContent.includes('桌面项目关联'))");
+    assert.equal(await evaluate("document.getElementById('thread-status').textContent.includes('已核对本机桌面项目关联')"), true);
+    await evaluate("document.querySelector('[name=threadId]').value='legacy-chat';document.querySelector('[name=threadId]').dispatchEvent(new Event('change'))");
+    await wait("document.getElementById('task-environment').textContent.includes('Fixture desktop project')");
+    assert.equal(await evaluate("document.getElementById('task-environment').textContent.includes('不继承权限')&&document.querySelector('[name=projectDir]').readOnly"), true);
     assert.ok(requests.every(request => request.method === "GET")); assert.deepEqual(failures, []);
-    return { allChatsDefault: true, emptyProjectExplained: true, explicitShowAll: true, pagination: true, retry: true, staleResponseDiscarded: true, readOnly: true };
+    return { allChatsDefault: true, emptyProjectExplained: true, explicitShowAll: true, pagination: true, retry: true, staleResponseDiscarded: true,
+      legacyProjectChatsSelectable: true, displayAssociationDoesNotGrantPermissions: true, readOnly: true };
   } finally {
     await evaluate("new Promise(resolve=>{const dialog=document.getElementById('task-dialog');if(!dialog.open)return resolve(true);dialog.addEventListener('close',()=>resolve(true),{once:true});dialog.close()})").catch(() => {});
     await call("Fetch.disable"); stop();

@@ -89,18 +89,25 @@ export function taskCatalog(form: HTMLFormElement, provider: () => "codex" | "mo
       if (!append) options("threadId", [], "请选择会话名称", false);
       const existing = new Set([...select("threadId").options].map(option => option.value));
       for (const item of page.items) if (!existing.has(item.id)) {
-        select("threadId").append(el("option", { value: item.id }, `${item.name} · ${item.id.slice(0, 8)}${!item.projectKnown ? " · 归属未知" : item.projectId === null ? " · 接口未关联项目" : ""}`));
+        const binding = item.projectBinding;
+        const hint = binding?.source === "desktop_state" ? binding.status === "assigned" ? " · 桌面项目关联" : binding.status === "unassigned" ? " · 桌面未分配项目" : " · 桌面归属待核对"
+          : !item.projectKnown ? " · 归属未知" : item.projectId === null ? " · 接口未关联项目" : "";
+        select("threadId").append(el("option", { value: item.id }, `${item.name} · ${item.id.slice(0, 8)}${hint}`));
         existing.add(item.id);
       }
       cursor = page.nextCursor; $("threads-more").hidden = !cursor;
+      const unassigned = [...select("projectId").options].find(option => option.value === "none");
+      if (unassigned) unassigned.textContent = page.desktopStatus === "ready" ? "桌面明确未分配项目的会话" : "接口未关联项目的会话";
       const count = select("threadId").options.length - 1;
       select("threadId").disabled = count === 0;
       $("threads-all").hidden = !filter;
-      threadStatus(count ? `已加载 ${count} 个会话，请按名称选择${cursor ? "；可继续加载更多" : ""}。`
+      const compatibility = page.desktopStatus === "ready" ? "已核对本机桌面项目关联。"
+        : page.desktopStatus && !["missing", "not_needed"].includes(page.desktopStatus) ? "桌面关联格式或来源未通过校验，当前仅显示接口可确认的归属。" : "";
+      threadStatus((count ? `已加载 ${count} 个会话，请按名称选择${cursor ? "；可继续加载更多" : ""}。`
         : sourceKind() === "mock" ? "模拟模式未读取真实会话，请切换真实账户后刷新目录。"
         : cursor ? "本页没有符合条件的会话，可加载更多或查看全部会话。"
         : filter && filter !== "none" ? "接口未返回与此项目关联的会话。可查看全部会话；未按目录推测项目归属。"
-        : filter === "none" ? "接口未返回明确未关联项目的会话，可查看全部会话。" : "当前来源未返回可读取的会话，请核对账户和 Codex 数据来源后重试。");
+        : filter === "none" ? "当前未返回明确未分配项目的会话，可查看全部会话。" : "当前来源未返回可读取的会话，请核对账户和 Codex 数据来源后重试。") + compatibility);
     } catch (error) {
       if (!valid()) return;
       if (!append) options("threadId", [], "会话读取失败，请重试", false);
@@ -117,11 +124,12 @@ export function taskCatalog(form: HTMLFormElement, provider: () => "codex" | "mo
     if (!id) return;
     const valid = () => editor === epoch && current === environmentRequest && scope === expectedScope && select("threadId").value === id && select("session").value === "resume";
     try {
-      const result = await api<{ scope: string; environment: ExecutionEnvironment; limitation: string }>(`/api/catalog/environment?${new URLSearchParams({ threadId: id, scope: expectedScope })}`);
+      const result = await api<{ scope: string; environment: ExecutionEnvironment; limitation: string; sidebarProject?: ProjectChoice }>(`/api/catalog/environment?${new URLSearchParams({ threadId: id, scope: expectedScope })}`);
       if (!valid()) return;
       if (result.scope !== expectedScope) throw new Error("目录账户已改变。");
       (form.elements.namedItem("projectDir") as HTMLInputElement).value = result.environment.cwd;
-      $("task-environment").textContent = `实际工作目录：${result.environment.cwd}\n关联文件夹：${result.environment.roots.join("；") || "未提供"}\n${result.limitation}`;
+      const sidebar = result.sidebarProject;
+      $("task-environment").textContent = `实际工作目录：${result.environment.cwd}\n${sidebar ? `桌面关联项目：${sidebar.name}（只读显示关联，不继承权限）\n` : ""}关联文件夹：${(sidebar?.roots ?? result.environment.roots).join("；") || "未提供"}\n${result.limitation}`;
     } catch (error) { if (valid()) threadStatus(error instanceof Error ? error.message : "会话环境读取失败，请重新选择或刷新。"); }
   }
   async function refresh() {

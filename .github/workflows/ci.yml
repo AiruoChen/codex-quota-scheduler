@@ -21,6 +21,7 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm run check
+      - run: node scripts/build-user-manual.mjs --check
       - run: npm test
       - run: npm run demo
 

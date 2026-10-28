@@ -17,6 +17,7 @@ export class StdioRpcClient {
   private readonly notifications = new Set<(method: string, params: unknown) => void>();
   private readonly failures = new Set<(error: AppError) => void>();
   private serverRequest: ((method: string, params: unknown) => unknown) | undefined;
+  private observer: ((phase: "request" | "response" | "error", method: string, id: number, value: unknown) => void) | undefined;
   private readonly child: ChildProcessWithoutNullStreams;
   private readonly pending = new Map<number, PendingRequest>();
   private readonly closed: Promise<void>;
@@ -61,6 +62,7 @@ export class StdioRpcClient {
       const cleanup = () => signal?.removeEventListener("abort", abort);
       signal?.addEventListener("abort", abort, { once: true });
       this.pending.set(id, { resolve, reject, timer, method, cleanup });
+      if (!this.observe("request", method, id, params)) return;
       this.write({ id, method, ...(params === undefined ? {} : { params }) });
     });
   }
@@ -83,6 +85,13 @@ export class StdioRpcClient {
 
   handleServerRequests(handler: (method: string, params: unknown) => unknown): void {
     this.serverRequest = handler;
+  }
+
+  /** Internal control-plane projection hook. Consumers must never store raw values. */
+  onObservation(listener: NonNullable<StdioRpcClient["observer"]>): void { this.observer = listener; }
+  private observe(phase: "request" | "response" | "error", method: string, id: number, value: unknown): boolean {
+    try { this.observer?.(phase, method, id, value); return true; }
+    catch { this.fail(new AppError("STORAGE_WRITE_FAILED", "无法保存执行诊断，停止本次提交并保留核对状态。")); return false; }
   }
 
   private write(message: unknown): void {
@@ -127,8 +136,15 @@ export class StdioRpcClient {
       this.pending.delete(message.id);
       clearTimeout(request.timer);
       request.cleanup();
-      if (message.error !== undefined) request.reject(createRpcError(message.error, request.method, this.launch.version));
-      else if (Object.hasOwn(message, "result")) request.resolve(message.result);
+      if (message.error !== undefined) {
+        const error = createRpcError(message.error, request.method, this.launch.version);
+        this.observe("error", request.method, message.id, { code: error.code, rpcCode: error.diagnostic.rpcCode });
+        request.reject(error);
+      }
+      else if (Object.hasOwn(message, "result")) {
+        if (this.observe("response", request.method, message.id, message.result)) request.resolve(message.result);
+        else request.reject(new AppError("STORAGE_WRITE_FAILED", "无法保存执行诊断，请核对当前会话状态。"));
+      }
       else { request.reject(new AppError("CODEX_PROTOCOL_ERROR", "Codex 响应缺少 result 或 error。")); this.invalid(); }
     }
     if (Buffer.byteLength(this.buffer) > StdioRpcClient.maxMessageBytes) this.invalid();
@@ -141,7 +157,8 @@ export class StdioRpcClient {
   private fail(error: AppError): void {
     const first = this.failure === undefined;
     this.failure ??= error;
-    for (const request of this.pending.values()) {
+    for (const [id, request] of this.pending) {
+      try { this.observer?.("error", request.method, id, { code: this.failure.code }); } catch { /* Preserve the original failure and never retry. */ }
       clearTimeout(request.timer);
       request.cleanup();
       request.reject(this.failure);

@@ -1,4 +1,5 @@
 import { AppError } from "../../shared/errors.js";
+import { isRecord } from "../../shared/validation.js";
 
 const reasons = {
   grant_invalid: "本次任务授权无效",
@@ -10,7 +11,7 @@ const reasons = {
   sandbox_missing: "服务端没有返回可核验的沙箱",
   runtime_roots: "实际运行根目录与授权不一致",
   environment_unknown: "环境选择未知，且尚未确认本机协议能显式禁用环境访问",
-  environment_selected: "服务端仍返回已选择的外部环境",
+  environment_selected: "会话保留了环境选择，尚未确认本机协议可在本次提交中清除",
   network_access: "实际网络权限与授权不一致",
   sandbox_type: "实际沙箱类型与授权不一致",
   temporary_writes: "临时目录写入限制未按授权生效",
@@ -37,4 +38,12 @@ export function resumeMismatchDiagnostic(error: unknown, cliVersion: string, env
 export function resumeMismatchMessage(error: unknown): string {
   const reason = error instanceof ResumeAuthorizationMismatch && Object.hasOwn(reasons, error.reason) ? error.reason : "verification_unavailable";
   return new ResumeAuthorizationMismatch(reason).message;
+}
+
+export function readResumeMismatchDiagnostic(value: unknown) {
+  if (!isRecord(value) || value.format !== 1 || value.stage !== "resume_authorization" || typeof value.reason !== "string" || !Object.hasOwn(reasons, value.reason)) return null;
+  return { format: 1, stage: "resume_authorization", reason: value.reason,
+    description: reasons[value.reason as Reason],
+    cliVersion: typeof value.cliVersion === "string" && value.cliVersion.length < 81 && /^\d+\.\d+\.\d+(?:[-+][\w.-]+)?$/.test(value.cliVersion) ? value.cliVersion : null,
+    environmentOverrideVerified: value.environmentOverrideVerified === true };
 }

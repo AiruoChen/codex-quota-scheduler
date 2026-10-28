@@ -17,7 +17,7 @@ export type DispatchDecision = { action: "wait"; reason: string }
 
 export interface SchedulerRepository {
   enqueue(taskId: string, expectedRevision?: number): TaskRun;
-  remove(runId: string): TaskRun;
+  remove(runId: string, confirmAttention?: boolean): TaskRun;
   status(): SchedulerStatus;
   pause(reason?: string): void;
   resume(): void;

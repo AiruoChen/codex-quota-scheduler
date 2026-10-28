@@ -14,7 +14,7 @@ if (process.argv.includes("generate-json-schema")) {
   const directory = join(value("--out"), "v2"); mkdirSync(directory, { recursive: true });
   writeFileSync(join(directory, "TurnStartParams.json"), JSON.stringify({ properties: {
     environments: { type: ["array", "null"], items: { $ref: "#/definitions/TurnEnvironmentParams" },
-      description: scenario === "authorization-null-unsupported" ? "Unknown semantics" : "Empty disables environment access for this turn." },
+      description: scenario.endsWith("-unsupported") ? "Unknown semantics" : "Empty disables environment access for this turn." },
   } }));
   process.exit(0);
 }
@@ -99,7 +99,7 @@ input.on("line", (line) => {
     }
     cwd = message.params.cwd;
     const explicit = !!message.params.config;
-    result({ thread: { id: "thread-1", cwd, ...(explicit ? { environments: scenario.startsWith("authorization-null-") ? null : scenario === "authorization-environment-selected" ? [{ environmentId: "fixture-remote" }] : [] } : {}), ...(Object.hasOwn(message.params, "projectId") ? { projectId: message.params.projectId } : scenario === "catalog-paged" || scenario.startsWith("authorization-") ? { projectId: "official-project-1" } : {}), status: { type: "idle" } }, cwd, model: "fixture-model",
+    result({ thread: { id: "thread-1", cwd, ...(explicit ? { environments: scenario.startsWith("authorization-null-") ? null : scenario === "authorization-environment-selected" || scenario.startsWith("authorization-selected-") ? [{ environmentId: "fixture-selected", cwd, runtimeWorkspaceRoots: message.params.runtimeWorkspaceRoots ?? [cwd] }] : [] } : {}), ...(Object.hasOwn(message.params, "projectId") ? { projectId: message.params.projectId } : scenario === "catalog-paged" || scenario.startsWith("authorization-") ? { projectId: "official-project-1" } : {}), status: { type: "idle" } }, cwd, model: "fixture-model",
       ...(explicit ? { approvalPolicy: "on-request", approvalsReviewer: "user", runtimeWorkspaceRoots: message.params.runtimeWorkspaceRoots,
         sandbox: scenario === "authorization-mismatch" ? { type: "dangerFullAccess" } : message.params.sandbox === "read-only" ? { type: "readOnly", networkAccess: false }
           : { type: "workspaceWrite", writableRoots: message.params.config["sandbox_workspace_write.writable_roots"], networkAccess: false,

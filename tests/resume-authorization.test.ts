@@ -116,8 +116,8 @@ test("explicit consent does not auto-accept command approvals", async () => {
   } finally { store?.close(); await env.cleanup(); }
 });
 
-for (const writing of [false, true]) test(`unexposed environments in ${writing ? "write" : "read"} mode require verified local schema and explicit empty turn override`, async () => {
-  const env = await setup("authorization-null-supported"); let store: SqliteStore | undefined;
+for (const scenario of ["authorization-null-supported", "authorization-environment-selected"]) for (const writing of [false, true]) test(`${scenario} in ${writing ? "write" : "read"} mode requires verified local schema and explicit empty turn override`, async () => {
+  const env = await setup(scenario); let store: SqliteStore | undefined;
   try {
     const task = await env.task(writing);
     if (writing) {
@@ -136,11 +136,11 @@ for (const writing of [false, true]) test(`unexposed environments in ${writing ?
     assert.equal((turns[0]!.params!.sandboxPolicy as Record<string, unknown>).networkAccess, false);
     assert.equal(turns[0]!.params!.approvalPolicy, "on-request"); assert.equal(turns[0]!.params!.approvalsReviewer, "user");
     const evidence = store.execution.events(run.id).find(e => e.type === "resume_authorization_verified");
-    assert.equal(evidence?.data.environmentSelection, "unreported"); assert.equal(evidence?.data.environmentOverrideVerified, true);
+    assert.equal(evidence?.data.environmentSelection, scenario === "authorization-null-supported" ? "unreported" : "cleared_on_turn"); assert.equal(evidence?.data.environmentOverrideVerified, true);
   } finally { store?.close(); await env.cleanup(); }
 });
 
-for (const [scenario, reason] of [["authorization-null-unsupported", "environment_unknown"], ["authorization-environment-selected", "environment_selected"]]) {
+for (const [scenario, reason] of [["authorization-null-unsupported", "environment_unknown"], ["authorization-selected-unsupported", "environment_selected"]]) {
   test(`${scenario} retains needs_attention and a fixed reason without a prompt or retry`, async () => {
     const env = await setup(scenario); let store: SqliteStore | undefined;
     try {
@@ -173,7 +173,7 @@ test("支持禁用环境也不能绕过审批、网络、临时目录、可写�
       ["writable_roots", (r: typeof response) => { r.sandbox.writableRoots.push(join(env.dir, "second")); }],
       ["runtime_roots", (r: typeof response) => { r.runtimeWorkspaceRoots.push(join(env.dir, "second")); }],
       ["thread_mismatch", (r: typeof response) => { r.thread.id = "different"; }],
-      ["environment_selected", (r: typeof response) => { r.thread.environments = [{ environmentId: "remote" }]; }],
+      ["environment_unknown", (r: typeof response) => { r.thread.environments = [{ environmentId: "remote" }]; }],
       ["environment_unknown", (r: typeof response) => { r.thread.environments = undefined; }],
       ["paths_unverified", (r: typeof response) => { r.cwd = join(env.dir, "missing-private-folder"); }],
     ] as const) {

@@ -72,10 +72,15 @@ export async function verifyResumedAuthorization(response: Record<string, unknow
   if (!isRecord(response.sandbox)) return fail("sandbox_missing");
   // null is documented as unexposed metadata, not permission denial or proof of no remote access.
   // Accept it only when this exact CLI's generated schema confirms environments: [] disables access.
-  // runTurn must send that override explicitly; selected or malformed environments remain blocked.
+  // runTurn must send that override explicitly, clearing inherited selection before model execution.
   const environments = response.thread.environments;
   if (Array.isArray(environments)) {
-    if (environments.length) return fail("environment_selected");
+    if (environments.length > 100) return fail("environment_unknown");
+    if (environments.length && environmentOverrideVerified !== true) return fail("environment_selected");
+    if (environments.some(item => !isRecord(item) || typeof item.environmentId !== "string" || !item.environmentId
+      || typeof item.cwd !== "string" || !Array.isArray(item.runtimeWorkspaceRoots)
+      || item.runtimeWorkspaceRoots.some(path => typeof path !== "string")
+      || Object.keys(item).some(key => !["environmentId", "cwd", "runtimeWorkspaceRoots"].includes(key)))) return fail("environment_unknown");
   } else if (environments !== null || environmentOverrideVerified !== true) return fail("environment_unknown");
   const policy = response.sandbox;
   const paths = async (value: unknown): Promise<string[]> => {

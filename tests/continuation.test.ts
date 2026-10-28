@@ -46,11 +46,12 @@ async function setup(enabled = true, maxAttempts = 3) {
   let time = epoch;
   const clock = { now: () => new Date(time) }, config = await loadConfig("config/codex.example.json");
   config.storage.databasePath = join(dir, "state.sqlite");
-  config.codex = { ...config.codex, executable: process.execPath, args: [resolve("tests/fixtures/fake-execution.mjs"), "--scenario-file", scenarioPath, "--quota-reset-file", resetPath, "--trace", trace, "--project", dir], requestTimeoutMs: 3000, shutdownTimeoutMs: 200 };
+  // These cases test quota evidence, not process speed. Dedicated execution tests cover short deadlines.
+  config.codex = { ...config.codex, executable: process.execPath, args: [resolve("tests/fixtures/fake-execution.mjs"), "--scenario-file", scenarioPath, "--quota-reset-file", resetPath, "--trace", trace, "--project", dir], requestTimeoutMs: 10000, shutdownTimeoutMs: 200 };
   const store = new SqliteStore(config.storage.databasePath, clock), scheduler = new SqliteSchedulerRepository(store.database, quotaStreamKey(config), "available", config, clock);
   const monitor = new SqliteMonitorRepository(store.database, quotaStreamKey(config), config, clock);
   await store.tasks.create({ id: "one", name: "One", enabled: true, priority: 10, projectDir: dir, promptFile: join(dir, "unused.md"), session: { mode: "new" },
-    execution: { sandbox: "read-only", timeoutMs: 5000 }, quotaContinuation: { enabled, maxAttempts } }, "ORIGINAL SNAPSHOT");
+    execution: { sandbox: "read-only", timeoutMs: 30000 }, quotaContinuation: { enabled, maxAttempts } }, "ORIGINAL SNAPSHOT");
   const origin = { connectionKey: codexConnectionKey(config.codex), account, cliVersion: "0.160.0-fixture" };
   let turn = 0;
   const fail: TaskExecutor = { async execute(_run, _signal, sink) {
@@ -121,7 +122,9 @@ for (const [scenario, expected] of [["quota-terminal", true], ["quota-terminal-r
     const env = await setup();
     try {
       await writeFile(env.scenarioPath, scenario); const run = await env.service().runTask("one", new AbortController().signal);
-      const records = await env.store.runs.listByTask("one"); assert.equal(records.length, expected ? 2 : 1);
+      const records = await env.store.runs.listByTask("one");
+      const code = /^[A-Z_]{1,64}(?=:|$)/.exec(run.error ?? "")?.[0] ?? "unknown";
+      assert.equal(records.length, expected ? 2 : 1, `status=${run.status}; code=${code}; scenario=${scenario}`);
       assert.ok(!JSON.stringify(records).includes("PRIVATE_QUOTA_BODY"));
       if (expected) { assert.equal(run.status, "failed"); assert.equal(records[1]?.continuation?.parentTurnId, "turn-1"); }
       if (scenario === "quota-intermediate-success") assert.equal(run.status, "succeeded");

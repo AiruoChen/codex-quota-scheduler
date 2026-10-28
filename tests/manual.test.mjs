@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
 
 async function fixture(t) {
   const directory = await mkdtemp(join(tmpdir(), "manual-render-"));
+  assert.equal(dirname(resolve(directory)), resolve(tmpdir()));
+  assert.ok(basename(directory).startsWith("manual-render-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   await mkdir(join(directory, "scripts")); await mkdir(join(directory, "docs"));
   const script = join(directory, "scripts/build-user-manual.mjs");

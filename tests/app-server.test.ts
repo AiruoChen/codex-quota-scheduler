@@ -97,6 +97,9 @@ test("通知、未知响应 ID 和反向请求不混淆额度响应，结束后�
     }).read();
     assert.equal(snapshot.source, "codex");
     const events = (await readFile(trace, "utf8")).trim().split("\n").map((line: string) => JSON.parse(line) as Record<string, unknown>);
+    const manifest = JSON.parse(await readFile("package.json", "utf8")) as { version: string };
+    assert.deepEqual((events.find(event => event.method === "initialize")?.params as { clientInfo: unknown }).clientInfo,
+      { name: "codex_quota_scheduler", title: "Codex Quota Scheduler", version: manifest.version });
     assert.equal(events[0]?.home, join(dir, "home"));
     assert.deepEqual(events.filter((event) => event.method).map((event) => event.method), [
       "initialize", "initialized", "account/read", "account/rateLimits/read",

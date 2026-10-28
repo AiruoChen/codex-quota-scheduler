@@ -5,13 +5,14 @@ import type { Clock } from "../../domain/ports.js";
 import { detectCodex, type CodexOptions, type CodexLaunch } from "./launcher.js";
 import { normalizeQuota } from "./normalize-quota.js";
 import { StdioRpcClient } from "./rpc-client.js";
+import { applicationVersion } from "../../shared/version.js";
 
 export async function connectCodex(options: CodexOptions, signal?: AbortSignal, experimental = false): Promise<{ client: StdioRpcClient; launch: CodexLaunch }> {
   const launch = await detectCodex(options, signal);
   const client = new StdioRpcClient(launch, options);
   try {
     const initialized = await client.request("initialize", {
-      clientInfo: { name: "codex_quota_scheduler", title: "Codex Quota Scheduler", version: "0.1.0" },
+      clientInfo: { name: "codex_quota_scheduler", title: "Codex Quota Scheduler", version: applicationVersion },
       ...(experimental ? { capabilities: { experimentalApi: true } } : {}),
     }, signal);
     if (!isRecord(initialized) || typeof initialized.userAgent !== "string") throw new AppError("CODEX_INCOMPATIBLE", "Codex 初始化响应缺少 userAgent。");

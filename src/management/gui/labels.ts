@@ -6,3 +6,4 @@ export function badge(status: string) {
   return el("span", { class: `badge ${["available", "succeeded"].includes(status) ? "good" : ["failed", "needs_attention", "blocked"].includes(status) ? "bad" : "warn"}` }, labels[status] ?? status);
 }
 Object.assign(reasons, { paused: "派发已暂停", busy: "手动或自动执行已持有执行权", requires_real_quota: "需要真实额度，模拟来源不派发", awaiting_refresh: "等待完整查询确认的新刷新事件", empty_queue: "没有可领取的快照", snapshot_changed: "额度检查点已变化，等待下次完整查询", worker_recovered: "调度记录修复后保持暂停" });
+Object.assign(reasons, { attention_removed: "已移除待核对记录，等待手动恢复派发" });

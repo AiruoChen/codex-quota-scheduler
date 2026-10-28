@@ -25,11 +25,13 @@ export function recoveryView(context: UiContext) {
     const blocked = state.scheduler.attention.includes(run.id);
     const acknowledge = button(blocked ? "确认已人工核对" : "已人工确认", () => context.confirmAction("acknowledge", run.id, "确认已人工核对原会话与文件变更？仅解除调度阻塞，状态仍保留待核对，不会重发。"));
     setDisabled(acknowledge, !blocked || !context.connected());
+    const reconcile = realButton(button("应用已确认结果", () => context.confirmAction("reconcile", run.id, "按已记录来源、账户、目录和准确回合读取并应用已确认终态？不会重新发送指令。")), context);
+    if (!run.threadId || !run.turnId) { setDisabled(reconcile, true); reconcile.title = "缺少准确会话或回合，无法应用远端结果。请查看本地诊断后人工确认解除阻塞。"; }
     return el("div", { class: "attention-card" }, el("strong", {}, run.name), el("p", { class: "subtle" }, `${run.id} · v${run.taskRevision} · ${run.projectDir}`),
       el("p", { class: "hint" }, `原会话 ${run.threadId ?? "未记录"} · 准确回合 ${run.turnId ?? "未记录"}`),
-      el("p", { class: "hint" }, blocked ? "仍阻塞自动派发。先核对执行证据，再选择应用或确认。" : "已解除该记录的派发阻塞；状态仍待核对，队列不会自动恢复。"),
+      el("p", { class: "hint" }, !run.turnId ? "没有准确回合，无法应用远端结果。人工核对后可从队列移除，或确认解除阻塞；不会重发。" : blocked ? "仍阻塞自动派发。先核对执行证据，再选择应用或确认。" : "已解除该记录的派发阻塞；状态仍待核对，队列不会自动恢复。"),
       el("div", { class: "actions wrap" }, button("查看记录", () => context.openRun(run.id)), realButton(button("只读核对", () => context.act("inspect", { id: run.id }, "核对已开始，只读取原来源与准确回合。")), context),
-        realButton(button("应用已确认结果", () => context.confirmAction("reconcile", run.id, "按已记录来源、账户、目录和准确回合读取并应用已确认终态？不会重新发送指令。")), context), acknowledge));
+        reconcile, acknowledge));
   }) : [empty("暂无待核对状态的运行。") ]));
   }
   async function load() {

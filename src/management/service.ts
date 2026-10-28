@@ -18,6 +18,7 @@ import { readRpcDiagnostic } from "../adapters/codex/rpc-errors.js";
 import { CodexCatalog } from "../adapters/codex/catalog.js";
 import { resolveTaskTarget } from "./task-target.js";
 import { ContinuationRepository } from "../storage/continuation-repository.js";
+import { runDiagnostics } from "./run-diagnostics.js";
 
 export interface ManagementJob {
   id: number;
@@ -123,6 +124,11 @@ export class ManagementService {
 
   async tasks() {
     return (await this.app.tasks()).map(({ promptSnapshot: _prompt, ...task }) => task);
+  }
+
+  async runDiagnostics(id: string) {
+    const store = await this.app.storage(), target = (await this.recovery()).repository.target(id);
+    return runDiagnostics(target.run, store.execution.events(id), this.clock.now(), store.execution.active()?.runId === id, target.origin !== null);
   }
 
   /** A deliberately small allowlist for user-exported diagnostics. Never serialize state, config or logs here. */
@@ -290,7 +296,7 @@ export class ManagementService {
       this.ensureOpen();
       return store.tasks.update({ ...task, enabled: data.enabled }, task.promptSnapshot, revision(data.revision));
     }
-    if (action === "remove") return scheduler.remove(requireString(data.id, "id"));
+    if (action === "remove") return scheduler.remove(requireString(data.id, "id"), data.confirm === true);
     if (action === "continuation-stop") { new ContinuationRepository(store.database, this.clock).stop(requireString(data.id, "id")); return { stopped: true }; }
     if (action === "pause") { scheduler.pause(); return scheduler.status(); }
     if (action === "resume") {

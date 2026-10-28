@@ -13,6 +13,7 @@ import { tasksQueueAcceptance } from "./lib/tasks-queue-acceptance.mjs";
 import { runsRecoveryAcceptance } from "./lib/runs-recovery-acceptance.mjs";
 import { trayAcceptance } from "./lib/tray-acceptance.mjs";
 import { catalogAcceptance } from "./lib/catalog-acceptance.mjs";
+import { queueRecoveryAcceptance } from "./lib/queue-recovery-acceptance.mjs";
 
 const args = process.argv.slice(2);
 if (args.length && (args.length !== 2 || args[0] !== "--packaged")) throw new Error("Usage: smoke-desktop.mjs [--packaged path/to/client.exe]");
@@ -83,6 +84,7 @@ try {
   await wait("document.visibilityState === 'visible' && document.hasFocus()");
   checkpoint = "runs-and-recovery";
   const runsRecovery = await runsRecoveryAcceptance(pageDebugger, artifacts, gui.taskId);
+  const queueRecovery = await queueRecoveryAcceptance(pageDebugger, configPath, artifacts, step => { checkpoint = step; });
   const image = await call("Page.captureScreenshot", { format: "png" });
   await writeFile(join(artifacts, "overview.png"), Buffer.from(image.data, "base64"));
   const record = await readInstance(configPath);
@@ -139,7 +141,7 @@ try {
     assert.ok(!appFiles.some((file) => /(^|[\\/])(node_modules|tests|\.local|\.runtime|\.git)([\\/]|$)|local\.json|\.sqlite|\.log$/.test(file)));
   }
   await writeFile(join(artifacts, "result.json"), JSON.stringify({ packaged, versions, nodeOnPath: false, source: result.source,
-    initiallyPaused: result.paused, gui, catalog, tasksQueue, runsRecovery, tray, singleInstance: true, controlledRestarts: 3, refreshDuringNavigation: true, isolatedLifecycleBridge: true,
+    initiallyPaused: result.paused, gui, catalog, tasksQueue, runsRecovery, queueRecovery, tray, singleInstance: true, controlledRestarts: 3, refreshDuringNavigation: true, isolatedLifecycleBridge: true,
     scriptErrors: pageDebugger.errors.length, gracefulExit: true }, null, 2));
   console.log(JSON.stringify({ passed: true, packaged, versions, artifacts }));
 } catch (error) {

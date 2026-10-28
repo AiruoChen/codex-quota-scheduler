@@ -82,13 +82,14 @@ test("unexpected effective permissions after resume leave needs_attention withou
     const run = await new ManualExecutionService(env.config, store).runTask(task.id, new AbortController().signal);
     assert.equal(run.status, "needs_attention", run.error ?? "Expected attention"); assert.match(run.error!, /CODEX_AUTHORIZATION_MISMATCH/);
     const calls = await requests(env.trace); assert.equal(calls.filter(r => r.method === "thread/resume").length, 1); assert.equal(calls.some(r => r.method === "turn/start"), false);
+    assert.equal(store.execution.events(run.id).find(e => e.type === "resume_authorization_mismatch")?.data.reason, "sandbox_type");
   } finally { store?.close(); await env.cleanup(); }
 });
 
 test("effective policy validation rejects network, writable, temp and approval expansion", async () => {
   const env = await setup();
   try {
-    const task = await env.task(true), response = { cwd: env.dir, approvalPolicy: "on-request", approvalsReviewer: "user", runtimeWorkspaceRoots: [env.dir], thread: { environments: [] as unknown[] },
+    const task = await env.task(true), response = { cwd: env.dir, approvalPolicy: "on-request", approvalsReviewer: "user", runtimeWorkspaceRoots: [env.dir], thread: { id: "thread-1", environments: [] as unknown[] },
       sandbox: { type: "workspaceWrite", networkAccess: false, writableRoots: [env.dir], excludeSlashTmp: true, excludeTmpdirEnvVar: true } };
     await verifyResumedAuthorization(response, task);
     for (const mutate of [
@@ -113,4 +114,73 @@ test("explicit consent does not auto-accept command approvals", async () => {
     assert.equal(run.status, "needs_attention"); assert.match(run.error!, /EXECUTION_REVIEW_REQUIRED/);
     assert.equal((await readFile(env.trace, "utf8")).includes('"decision":"accept"'), false);
   } finally { store?.close(); await env.cleanup(); }
+});
+
+for (const scenario of ["authorization-null-supported", "authorization-environment-selected"]) for (const writing of [false, true]) test(`${scenario} in ${writing ? "write" : "read"} mode requires verified local schema and explicit empty turn override`, async () => {
+  const env = await setup(scenario); let store: SqliteStore | undefined;
+  try {
+    const task = await env.task(writing);
+    if (writing) {
+      const target = env.target(true); target.authorization.writableRoots.push(join(env.dir, "second"));
+      task.environment = (await env.grant(target, "workspace-write")).environment;
+    }
+    store = new SqliteStore(env.config.storage.databasePath); await store.tasks.create(task, "SYNTHETIC_ONLY");
+    const run = await new ManualExecutionService(env.config, store).runTask(task.id, new AbortController().signal);
+    assert.equal(run.status, "succeeded", run.error ?? "Expected success");
+    const calls = await requests(env.trace);
+    assert.equal(calls.filter(r => r.method === "fixture/schema").length, 1);
+    assert.equal(calls.filter(r => r.method === "thread/resume").length, 1);
+    const turns = calls.filter(r => r.method === "turn/start"); assert.equal(turns.length, 1);
+    assert.deepEqual(turns[0]!.params!.environments, []);
+    assert.deepEqual(turns[0]!.params!.runtimeWorkspaceRoots, writing ? [env.dir, join(env.dir, "second")].sort() : [env.dir]);
+    assert.equal((turns[0]!.params!.sandboxPolicy as Record<string, unknown>).networkAccess, false);
+    assert.equal(turns[0]!.params!.approvalPolicy, "on-request"); assert.equal(turns[0]!.params!.approvalsReviewer, "user");
+    const evidence = store.execution.events(run.id).find(e => e.type === "resume_authorization_verified");
+    assert.equal(evidence?.data.environmentSelection, scenario === "authorization-null-supported" ? "unreported" : "cleared_on_turn"); assert.equal(evidence?.data.environmentOverrideVerified, true);
+  } finally { store?.close(); await env.cleanup(); }
+});
+
+for (const [scenario, reason] of [["authorization-null-unsupported", "environment_unknown"], ["authorization-selected-unsupported", "environment_selected"]]) {
+  test(`${scenario} retains needs_attention and a fixed reason without a prompt or retry`, async () => {
+    const env = await setup(scenario); let store: SqliteStore | undefined;
+    try {
+      const task = await env.task(true); store = new SqliteStore(env.config.storage.databasePath); await store.tasks.create(task, "SYNTHETIC_PRIVATE_PROMPT");
+      const run = await new ManualExecutionService(env.config, store).runTask(task.id, new AbortController().signal);
+      assert.equal(run.status, "needs_attention"); assert.match(run.error!, new RegExp(reason!));
+      const calls = await requests(env.trace); assert.equal(calls.filter(r => r.method === "thread/resume").length, 1);
+      assert.equal(calls.filter(r => r.method === "turn/start").length, 0);
+      const evidence = store.execution.events(run.id).find(e => e.type === "resume_authorization_mismatch");
+      assert.equal(evidence?.data.reason, reason); assert.ok(!JSON.stringify(evidence?.data).includes(env.dir));
+      assert.ok(!JSON.stringify(evidence?.data).includes("SYNTHETIC_PRIVATE"));
+    } finally { store?.close(); await env.cleanup(); }
+  });
+}
+
+test("支持禁用环境也不能绕过审批、网络、临时目录、可写目录及会话身份校验", async () => {
+  const env = await setup();
+  try {
+    const task = await env.task(true);
+    const response = { cwd: env.dir, approvalPolicy: "on-request", approvalsReviewer: "user", runtimeWorkspaceRoots: [env.dir],
+      thread: { id: "thread-1", environments: null as unknown },
+      sandbox: { type: "workspaceWrite", networkAccess: false, writableRoots: [env.dir], excludeSlashTmp: true, excludeTmpdirEnvVar: true } };
+    await verifyResumedAuthorization(response, task, true);
+    await assert.rejects(verifyResumedAuthorization(response, task), error => (error as { reason: string }).reason === "environment_unknown");
+    for (const [reason, mutate] of [
+      ["approval_policy", (r: typeof response) => { r.approvalPolicy = "never"; }],
+      ["approval_reviewer", (r: typeof response) => { r.approvalsReviewer = "auto_review"; }],
+      ["network_access", (r: typeof response) => { r.sandbox.networkAccess = true; }],
+      ["temporary_writes", (r: typeof response) => { r.sandbox.excludeTmpdirEnvVar = false; }],
+      ["writable_roots", (r: typeof response) => { r.sandbox.writableRoots.push(join(env.dir, "second")); }],
+      ["runtime_roots", (r: typeof response) => { r.runtimeWorkspaceRoots.push(join(env.dir, "second")); }],
+      ["thread_mismatch", (r: typeof response) => { r.thread.id = "different"; }],
+      ["environment_unknown", (r: typeof response) => { r.thread.environments = [{ environmentId: "remote" }]; }],
+      ["environment_unknown", (r: typeof response) => { r.thread.environments = undefined; }],
+      ["paths_unverified", (r: typeof response) => { r.cwd = join(env.dir, "missing-private-folder"); }],
+    ] as const) {
+      const changed = structuredClone(response); mutate(changed);
+      await assert.rejects(verifyResumedAuthorization(changed, task, true), error => {
+        assert.equal((error as { reason: string }).reason, reason); assert.ok(!(error as Error).message.includes(env.dir)); return true;
+      });
+    }
+  } finally { await env.cleanup(); }
 });

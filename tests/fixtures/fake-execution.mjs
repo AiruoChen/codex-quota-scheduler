@@ -1,13 +1,23 @@
 import assert from "node:assert/strict";
-import { appendFileSync, readFileSync } from "node:fs";
+import { appendFileSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { createInterface } from "node:readline";
+import { join } from "node:path";
 
 const value = (name) => { const index = process.argv.indexOf(name); return index < 0 ? undefined : process.argv[index + 1]; };
 const scenario = value("--scenario-file") ? readFileSync(value("--scenario-file"), "utf8").trim() : value("--scenario") ?? "success";
 const fixtureTurnId = scenario.startsWith("continuation-") ? "turn-2" : "turn-1";
 const trace = value("--trace");
 if (process.argv.includes("--version")) { console.log("codex-cli 0.160.0-fixture"); process.exit(0); }
+if (process.argv.includes("generate-json-schema")) {
+  if (trace) appendFileSync(trace, JSON.stringify({ method: "fixture/schema" }) + "\n");
+  const directory = join(value("--out"), "v2"); mkdirSync(directory, { recursive: true });
+  writeFileSync(join(directory, "TurnStartParams.json"), JSON.stringify({ properties: {
+    environments: { type: ["array", "null"], items: { $ref: "#/definitions/TurnEnvironmentParams" },
+      description: scenario.endsWith("-unsupported") ? "Unknown semantics" : "Empty disables environment access for this turn." },
+  } }));
+  process.exit(0);
+}
 const audit = value("--audit-file");
 const record = (event, key) => { if (audit) appendFileSync(audit, JSON.stringify({ event, pid: process.pid, ...(key ? { key } : {}) }) + "\n"); };
 record("spawn"); process.on("exit", () => record("exit"));
@@ -89,7 +99,7 @@ input.on("line", (line) => {
     }
     cwd = message.params.cwd;
     const explicit = !!message.params.config;
-    result({ thread: { id: "thread-1", cwd, ...(explicit ? { environments: [] } : {}), ...(Object.hasOwn(message.params, "projectId") ? { projectId: message.params.projectId } : scenario === "catalog-paged" || scenario.startsWith("authorization-") ? { projectId: "official-project-1" } : {}), status: { type: "idle" } }, cwd, model: "fixture-model",
+    result({ thread: { id: "thread-1", cwd, ...(explicit ? { environments: scenario.startsWith("authorization-null-") ? null : scenario === "authorization-environment-selected" || scenario.startsWith("authorization-selected-") ? [{ environmentId: "fixture-selected", cwd, runtimeWorkspaceRoots: message.params.runtimeWorkspaceRoots ?? [cwd] }] : [] } : {}), ...(Object.hasOwn(message.params, "projectId") ? { projectId: message.params.projectId } : scenario === "catalog-paged" || scenario.startsWith("authorization-") ? { projectId: "official-project-1" } : {}), status: { type: "idle" } }, cwd, model: "fixture-model",
       ...(explicit ? { approvalPolicy: "on-request", approvalsReviewer: "user", runtimeWorkspaceRoots: message.params.runtimeWorkspaceRoots,
         sandbox: scenario === "authorization-mismatch" ? { type: "dangerFullAccess" } : message.params.sandbox === "read-only" ? { type: "readOnly", networkAccess: false }
           : { type: "workspaceWrite", writableRoots: message.params.config["sandbox_workspace_write.writable_roots"], networkAccess: false,

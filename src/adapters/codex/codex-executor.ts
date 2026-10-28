@@ -16,6 +16,9 @@ import { hasResumeAuthorization } from "../../domain/resume-authorization.js";
 import { resumeConfig, resumeWorkspaceRoots, resumeRequirements, verifyResumedAuthorization } from "./resume-authorization.js";
 import { continuationReady, quotaInterruption } from "../../domain/continuation.js";
 import { validateModel } from "./model-validation.js";
+import { inspectTurnEnvironmentOverride } from "./turn-environment-protocol.js";
+import { resumeMismatchDiagnostic, resumeMismatchMessage } from "./resume-diagnostics.js";
+import { ExecutionTrace } from "./execution-trace.js";
 
 type VerifiedQuota = QuotaSnapshot & { account: NonNullable<QuotaSnapshot["account"]> };
 const sameAccount = (a: NonNullable<QuotaSnapshot["account"]>, b: NonNullable<QuotaSnapshot["account"]>) =>
@@ -34,6 +37,7 @@ export class CodexExecutor implements TaskExecutor {
   }
 
   async execute(run: TaskRun, signal: AbortSignal, sink: ExecutionSink, expectedAccount?: QuotaSnapshot["account"]): Promise<ExecutionOutcome> {
+    sink.event("execution_stage", { stage: "validate_local_task" });
     if (this.config.provider !== "codex") throw new AppError("EXECUTION_REQUIRES_CODEX", "手动执行必须使用 provider=codex，不能使用模拟额度。");
     if (!run.taskSnapshot.enabled) return { status: "waiting_quota", output: "", error: "QUOTA_WAIT: empty_queue" };
     if (!(await stat(run.taskSnapshot.projectDir)).isDirectory()) throw new AppError("PROJECT_NOT_FOUND", "任务工作目录不是有效目录。");
@@ -41,8 +45,13 @@ export class CodexExecutor implements TaskExecutor {
     const environment = run.taskSnapshot.environment;
     const explicitlyAuthorized = hasResumeAuthorization(run.taskSnapshot);
     if (environment && !environment.permissionsVerified && !explicitlyAuthorized) throw new AppError("CODEX_ENVIRONMENT_UNVERIFIED", "执行环境权限信息不完整，不能发送任务。");
+    sink.event("execution_stage", { stage: "connect" });
     const { client, launch } = await connectCodex(this.config.codex, signal, !!environment);
     try {
+      const trace = new ExecutionTrace(sink);
+      trace.record("connected", "initialize", 0, { cliVersion: launch.version });
+      if (explicitlyAuthorized) trace.expected(run.taskSnapshot, launch.version);
+      client.onObservation((phase, method, id, value) => trace.record(phase, method, id, value));
       let quota = await this.verifiedQuota(client, launch.version, signal, expectedAccount);
       const continuation = run.continuation;
       if (continuation && (continuation.connectionKey !== codexConnectionKey(this.config.codex) || continuation.accountScope !== catalogScope(this.config.codex, quota.account))) throw new AppError("CONTINUATION_SCOPE_CHANGED", "续接链的账户或来源发生变化，请人工核对。");
@@ -94,9 +103,16 @@ export class CodexExecutor implements TaskExecutor {
       if (!isRecord(response) || !isRecord(response.thread) || typeof response.thread.id !== "string") throw new AppError("CODEX_PROTOCOL_ERROR", "会话响应缺少 thread.id。");
       const thread = response.thread;
       if (explicitlyAuthorized) {
-        try { await verifyResumedAuthorization(response, task); }
-        catch { return { status: "needs_attention", output: "", error: "CODEX_AUTHORIZATION_MISMATCH: 服务端实际权限未通过核验，未发送指令；请人工核对会话后重新授权。" }; }
-        sink.event("resume_authorization_verified", { version: 1, sandbox: task.execution?.sandbox ?? "read-only", readScope: "local-files", networkAccess: false, writableFolderCount: environment!.writableRoots.length });
+        let environmentOverrideVerified = false;
+        try {
+          if (thread.environments === null || Array.isArray(thread.environments) && thread.environments.length > 0) environmentOverrideVerified = await inspectTurnEnvironmentOverride(launch, this.config.codex, signal);
+          await verifyResumedAuthorization(response, task, environmentOverrideVerified);
+        } catch (error) {
+          sink.event("resume_authorization_mismatch", { ...resumeMismatchDiagnostic(error, launch.version, environmentOverrideVerified) });
+          return { status: "needs_attention", output: "", error: `CODEX_AUTHORIZATION_MISMATCH: ${resumeMismatchMessage(error)}` };
+        }
+        sink.event("resume_authorization_verified", { version: 1, sandbox: task.execution?.sandbox ?? "read-only", readScope: "local-files", networkAccess: false,
+          writableFolderCount: environment!.writableRoots.length, environmentSelection: thread.environments === null ? "unreported" : (thread.environments as unknown[]).length ? "cleared_on_turn" : "empty", environmentOverrideVerified });
       }
       if (environment?.projectKnown && thread.projectId !== environment.projectId) throw new AppError("PROJECT_CHANGED", "服务端返回的项目归属与任务快照不一致。");
       if (isRecord(thread.status) && thread.status.type === "active") throw new AppError("THREAD_BUSY", "目标会话已有活动回合，不能追加指令。");

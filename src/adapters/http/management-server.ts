@@ -111,9 +111,11 @@ export async function serveManagement(service: ManagementService, options: Serve
           const recovery = (await service.recovery()).repository;
           const target = recovery.target(id);
           return reply(response, 200, { run: target.run, events: store.execution.events(id), recovery: recovery.events(id),
+            queued: !!store.database.connection.prepare("SELECT run_id FROM dispatch_queue WHERE run_id=?").get(id),
             cancelRequested: store.execution.cancelled(id),
             origin: target.origin ? { account: maskAccount(target.origin.account.email), cliVersion: target.origin.cliVersion } : null });
         }
+        if (path === "/api/run/diagnostics") return reply(response, 200, await service.runDiagnostics(id));
         if (path === "/api/config") return reply(response, 200, { active: service.config, ...await new ConfigManager(service.configPath).snapshot() });
         if (path === "/api/diagnostics") return reply(response, 200, await service.diagnostics());
         if (path.startsWith("/api/catalog/")) return reply(response, 200, await service.catalog(path.slice("/api/catalog/".length), url.searchParams));

@@ -24,7 +24,10 @@ export function queueView(context: UiContext) {
   setDisabled($<HTMLButtonElement>("queue-prev"), offset === 0); setDisabled($<HTMLButtonElement>("queue-next"), offset + 25 >= entries.length);
   $("queue-items").replaceChildren(...(entries.length ? entries.slice(offset, offset + 25).map((item) => el("div", { class: "queue-item" }, el("div", {}, el("strong", {}, item.name),
     el("small", {}, `${item.taskId} · 版本 ${item.revision} · 优先级 ${item.priority} · 入队序号 ${item.sequence}${item.continuation ? ` · 额度续接第 ${item.continuation.attempt} 次` : ""}`), el("small", {}, item.projectDir), el("small", {}, `入队 ${time(item.createdAt)}${item.enabled === null ? " · 任务已归档，未领取记录将跳过" : !item.enabled ? " · 任务已停用，未领取记录将跳过" : ""}`)),
-    el("div", { class: "actions wrap" }, badge(item.status), button("查看快照", () => context.openRun(item.runId)), ...(["queued", "waiting_quota"].includes(item.status) ? [button("移除", async () => { if (confirm("移除尚未领取的快照？历史保留，同一版本不会重新入队。")) await context.act("remove", { id: item.runId }, "已移除尚未领取的队列记录。"); }, "quiet")] : [])))) : [empty("没有符合条件的队列记录。可调整筛选，或前往任务管理入队。") ]));
+    el("div", { class: "actions wrap" }, badge(item.status), button("查看快照", () => context.openRun(item.runId)), ...(item.status !== "running" ? [button(item.status === "needs_attention" ? "移除并解除阻塞" : "从队列移除", async () => {
+      const attention = item.status === "needs_attention";
+      if (confirm(attention ? "确认已人工核对？从队列移除并解除此记录的本地阻塞，未知结果与历史保留；不会取消或重发远端任务，派发保持暂停。" : "从队列移除此记录？历史保留，同一任务版本不会重新入队。")) await context.act("remove", { id: item.runId, confirm: attention }, "已从队列移除，运行历史仍保留。待核对移除后需手动恢复派发。");
+    }, "quiet")] : [button("请求取消", () => context.confirmAction("cancel", item.runId, "请求取消当前任务？需等待准确回合终止；确认终态后才能从队列移除。"))])))) : [empty("没有符合条件的队列记录。可调整筛选，或前往任务管理入队。") ]));
   }
   for (const id of ["queue-search", "queue-filter"]) $(id).addEventListener(id === "queue-search" ? "input" : "change", () => { offset = 0; render(); });
   $("queue-prev").onclick = () => { offset = Math.max(0, offset - 25); render(); };

@@ -2,7 +2,7 @@ import type { AppConfig } from "../config/load.js";
 import type { Clock, TaskExecutor } from "../domain/ports.js";
 import { systemClock } from "../domain/ports.js";
 import type { ExecutionOutcome, ExecutionSink, TaskRun } from "../domain/task.js";
-import { AppError } from "../shared/errors.js";
+import { AppError, systemErrorCode } from "../shared/errors.js";
 import type { SqliteStore } from "../storage/sqlite-store.js";
 import { CodexExecutor } from "../adapters/codex/codex-executor.js";
 import type { QuotaSnapshot } from "../domain/quota.js";
@@ -65,6 +65,7 @@ export class ManualExecutionService {
         const diagnostic = rpcDiagnostic(error);
         if (diagnostic) sink.event("codex_rpc_error", { ...diagnostic });
         const failure = error instanceof AppError ? error : new AppError("EXECUTION_FAILED", "手动执行未完成，请检查项目目录、CLI 和网络。");
+        sink.event("execution_exception", { code: failure.code, systemCode: systemErrorCode(error) });
         result = {
           status: submissionStarted ? "needs_attention" : controller.signal.aborted && controller.signal.reason !== "timeout" ? "cancelled" : "failed",
           output, error: controller.signal.reason === "timeout" ? "EXECUTION_TIMEOUT: 提交前超时。"

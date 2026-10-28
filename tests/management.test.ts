@@ -51,6 +51,27 @@ async function until(predicate: () => Promise<boolean>) {
   throw new Error("Timed out waiting for management operation");
 }
 
+test("单运行诊断受会话保护并重新脱敏；待核对移除需确认且不删除历史", async () => {
+  const env = await setup();
+  try {
+    await env.task("PRIVATE_DIAGNOSTIC_PROMPT");
+    const run = await (await env.action("enqueue", { id: "one" })).json() as TaskRun;
+    const store = await env.service.app.storage();
+    await store.runs.update(run.id, { status: "needs_attention", error: "CODEX_AUTHORIZATION_MISMATCH: fixture" }, "queued");
+    store.execution.event(run.id, "codex_trace", { format: 1, phase: "response", method: "thread/resume", requestId: 1, offsetMs: 1,
+      fields: [{ name: "cwd", value: env.dir }, { name: "approvalPolicy", value: "on-request" }], raw: "PRIVATE_RESPONSE" });
+    assert.equal((await fetch(env.server.url + `/api/run/diagnostics?id=${run.id}`)).status, 403);
+    const report = await env.get(`/api/run/diagnostics?id=${run.id}`);
+    assert.equal(report.canReconcile, false); assert.equal(report.timelineAvailable, true);
+    assert.ok(!JSON.stringify(report).includes("PRIVATE")); assert.ok(!JSON.stringify(report).includes(env.dir));
+    assert.equal((await env.action("remove", { id: run.id })).status, 409);
+    assert.equal((await env.action("remove", { id: run.id, confirm: true })).status, 200);
+    const state = await env.get("/api/state") as { scheduler: { queue: { runId: string }[]; attention: string[]; paused: boolean } };
+    assert.equal(state.scheduler.queue.some(q => q.runId === run.id), false); assert.equal(state.scheduler.attention.includes(run.id), false);
+    assert.equal(state.scheduler.paused, true); assert.equal((await store.runs.get(run.id))!.status, "needs_attention"); await store.check();
+  } finally { await env.cleanup(); }
+});
+
 test("U02/U07: GUI API creates a backend UUID idempotently and saves reserve pairs with concurrency validation", async () => {
   const env = await setup();
   try {

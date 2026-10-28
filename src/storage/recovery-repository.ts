@@ -112,6 +112,7 @@ export class SqliteRecoveryRepository implements RecoveryRepository {
       const target = this.target(id);
       if (target.run.status !== "needs_attention") throw new AppError("RECOVERY_NOT_ATTENTION", "仅待核对记录可应用恢复结果；running 请先检查并 repair。");
       if (this.db.connection.prepare("SELECT run_id FROM execution_lock WHERE run_id=?").get(id)) throw new AppError("EXECUTION_BUSY", "此记录仍持有执行权，不能应用远端核对结果。");
+      if (!target.origin || !target.run.threadId || !target.run.turnId) throw new AppError("RECOVERY_TARGET_INCOMPLETE", "没有已记录来源、准确会话和回合，无法应用远端结果。请查看本地诊断，人工核对后从队列移除或确认解除阻塞。");
       pauseForRecovery(this.db, this.clock);
       this.db.connection.prepare("DELETE FROM scheduler_attention_ack WHERE run_id=?").run(id);
       return target;
@@ -125,6 +126,7 @@ export class SqliteRecoveryRepository implements RecoveryRepository {
       const run = current.run;
       if (run.status !== "needs_attention") throw new AppError("RECOVERY_NOT_ATTENTION", "仅待核对记录可应用恢复结果；running 请先检查并 repair。");
       if (this.db.connection.prepare("SELECT run_id FROM execution_lock WHERE run_id=?").get(run.id)) throw new AppError("EXECUTION_BUSY", "此记录仍持有执行权，不能应用远端核对结果。");
+      if (!current.origin || !run.threadId || !run.turnId) throw new AppError("RECOVERY_TARGET_INCOMPLETE", "缺少准确会话、回合或来源，不能应用远端结果，也不会撤销已有人工确认。");
       pauseForRecovery(this.db, this.clock);
       this.db.connection.prepare("DELETE FROM scheduler_attention_ack WHERE run_id=?").run(run.id);
       recoveryEvent(this.db, this.clock, run.id, "reconcile", { kind: result.kind, code: result.code });

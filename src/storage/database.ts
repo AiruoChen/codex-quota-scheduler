@@ -6,6 +6,9 @@ import { localProcesses } from "../shared/process.js";
 
 export const dispatchQueueView = `CREATE VIEW dispatch_queue AS SELECT p.sequence,q.run_id,q.task_id,q.task_revision FROM scheduler_queue q JOIN queue_positions p ON p.run_id=q.run_id
      UNION ALL SELECT p.sequence,q.run_id,q.task_id,q.task_revision FROM continuation_queue q JOIN queue_positions p ON p.run_id=q.run_id`;
+export const removableDispatchQueueView = `CREATE VIEW dispatch_queue AS
+     SELECT p.sequence,q.run_id,q.task_id,q.task_revision FROM scheduler_queue q JOIN queue_positions p ON p.run_id=q.run_id WHERE NOT EXISTS (SELECT 1 FROM queue_removals x WHERE x.run_id=q.run_id)
+     UNION ALL SELECT p.sequence,q.run_id,q.task_id,q.task_revision FROM continuation_queue q JOIN queue_positions p ON p.run_id=q.run_id WHERE NOT EXISTS (SELECT 1 FROM queue_removals x WHERE x.run_id=q.run_id)`;
 
 export const migrations = [
   `CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;
@@ -60,6 +63,9 @@ export const migrations = [
    CREATE TABLE continuation_queue (run_id TEXT PRIMARY KEY REFERENCES runs(id), parent_run_id TEXT NOT NULL UNIQUE REFERENCES runs(id),
      task_id TEXT NOT NULL REFERENCES tasks(id), task_revision INTEGER NOT NULL) STRICT;
    ${dispatchQueueView};`,
+  `CREATE TABLE queue_removals (run_id TEXT PRIMARY KEY REFERENCES runs(id), removed_at TEXT NOT NULL, previous_status TEXT NOT NULL) STRICT;
+   DROP VIEW dispatch_queue;
+   ${removableDispatchQueueView};`,
 ];
 
 export class Database {

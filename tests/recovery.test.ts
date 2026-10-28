@@ -74,9 +74,9 @@ test("失去启动确认时没有回合 ID，不猜测最新回合；旧记录�
   try {
     const saved = (await env.store.runs.get(env.run.id))!;
     env.store.database.connection.prepare("UPDATE runs SET data_json=? WHERE id=?").run(JSON.stringify({ ...saved, turnId: null }), saved.id);
-    assert.equal((await env.service.reconcile(saved.id)).result.code, "TURN_ID_UNKNOWN");
+    await assert.rejects(env.service.reconcile(saved.id), { code: "RECOVERY_TARGET_INCOMPLETE" });
     env.store.database.connection.prepare("DELETE FROM execution_origins WHERE run_id=?").run(saved.id);
-    assert.equal((await env.service.reconcile(saved.id)).result.code, "ORIGIN_UNKNOWN");
+    await assert.rejects(env.service.reconcile(saved.id), { code: "RECOVERY_TARGET_INCOMPLETE" });
     assert.equal(await readFile(env.trace, "utf8").catch(() => ""), "");
   } finally { await env.cleanup(); }
 });

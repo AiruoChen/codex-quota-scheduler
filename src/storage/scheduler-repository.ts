@@ -43,14 +43,24 @@ export class SqliteSchedulerRepository implements SchedulerRepository {
     });
   }
 
-  remove(id: string): TaskRun {
+  remove(id: string, confirmAttention = false): TaskRun {
     return this.db.transaction(() => {
       if (!this.db.connection.prepare("SELECT run_id FROM dispatch_queue WHERE run_id=?").get(id)) throw new AppError("QUEUE_NOT_FOUND", "运行记录不属于自动队列。");
       const run = this.run(id);
-      if (!["queued", "waiting_quota"].includes(run.status)) throw new AppError("RUN_ALREADY_STARTED", "只能移除尚未提交的排队记录；运行中请使用 runs cancel。");
-      const next = { ...run, status: "cancelled" as const, completedAt: this.clock.now().toISOString() };
+      if (run.status === "running" || this.db.connection.prepare("SELECT run_id FROM execution_lock WHERE run_id=?").get(id)) throw new AppError("EXECUTION_BUSY", "运行仍活动或持有执行权；请先请求取消并等待终态，或显式核对遗留执行权。");
+      const pending = ["queued", "waiting_quota"].includes(run.status);
+      if (pending && (run.turnId || this.db.connection.prepare("SELECT sequence FROM execution_events WHERE run_id=? AND type='submission_started'").get(id))) throw new AppError("RECOVERY_REQUIRED", "记录已有提交证据，需先核对结果，不能按未执行任务删除。");
+      if (run.status === "needs_attention") {
+        if (confirmAttention !== true) throw new AppError("CONFIRM_REQUIRED", "请确认已人工核对；移除仅解除本地队列阻塞，未知结果与历史保留，不会取消或重发远端任务。");
+        this.db.connection.prepare("INSERT OR IGNORE INTO scheduler_attention_ack VALUES (?,?)").run(id, this.clock.now().toISOString());
+        this.pause("attention_removed");
+        recoveryEvent(this.db, this.clock, id, "queue_attention_removed", { previousStatus: run.status });
+      }
+      const next = pending ? { ...run, status: "cancelled" as const, completedAt: this.clock.now().toISOString() } : run;
       this.db.connection.prepare("UPDATE runs SET data_json=? WHERE id=?").run(JSON.stringify(next), id);
-      this.execution.event(id, "scheduler_removed", {});
+      // The tombstone hides membership while preserving positions, version deduplication and history.
+      this.db.connection.prepare("INSERT INTO queue_removals VALUES (?,?,?)").run(id, this.clock.now().toISOString(), run.status);
+      this.execution.event(id, "scheduler_removed", { previousStatus: run.status, attentionAcknowledged: run.status === "needs_attention" });
       return next;
     });
   }
@@ -225,7 +235,12 @@ export function checkSchedulerStorage(db: Database): void {
     if (row.task_id !== run.taskId || row.task_revision !== run.taskRevision) invalid();
   }
   const count = (table: string) => Number(db.connection.prepare(`SELECT count(*) AS n FROM ${table}`).get()!.n);
-  if (count("dispatch_queue") !== count("scheduler_queue") + count("continuation_queue")) invalid();
+  const membershipCount = count("scheduler_queue") + count("continuation_queue");
+  if (count("queue_positions") !== membershipCount || count("dispatch_queue") + count("queue_removals") !== membershipCount) invalid();
+  for (const row of db.connection.prepare("SELECT * FROM queue_removals").all()) {
+    if (!validDate(row.removed_at) || !["queued", "waiting_quota", "needs_attention", "succeeded", "failed", "cancelled"].includes(String(row.previous_status))
+      || !db.connection.prepare("SELECT run_id FROM scheduler_queue WHERE run_id=? UNION ALL SELECT run_id FROM continuation_queue WHERE run_id=?").get(row.run_id!, row.run_id!)) invalid();
+  }
   for (const row of db.connection.prepare("SELECT * FROM continuation_plans").all()) {
     const evidence = readInterruption(row.evidence_json), child = db.connection.prepare("SELECT data_json FROM runs WHERE id=?").get(row.child_run_id!);
     const run = child ? readRun(child.data_json) : null;

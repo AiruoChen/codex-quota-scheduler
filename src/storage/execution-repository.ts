@@ -27,6 +27,7 @@ export class ExecutionRepository {
     assertRecoveryClear(this.db, this.clock, "execution");
     const run = this.get(id);
     if (run.continuation && !scheduled) throw new AppError("CONTINUATION_SCHEDULER_ONLY", "自动续接记录必须经过调度器确认刷新，不能手动绕过。");
+    if (run.timed && !scheduled) throw new AppError("TIMED_SCHEDULER_ONLY", "定时实例只能由调度器在有效期内核验后执行。");
     if (!["queued", "waiting_quota"].includes(run.status)) throw new AppError("RUN_ALREADY_STARTED", "此记录已启动或已结束，不能重复提交。");
     const task = this.db.connection.prepare("SELECT definition_json FROM tasks WHERE id=? AND deleted_at IS NULL").get(run.taskId);
     if (!task || (JSON.parse(String(task.definition_json)) as { enabled: boolean }).enabled !== true) throw new AppError("TASK_DISABLED", "任务不存在、已归档或已停用。");

@@ -16,6 +16,9 @@ import { SqliteSchedulerRepository } from "./storage/scheduler-repository.js";
 import { SqliteRecoveryRepository } from "./storage/recovery-repository.js";
 import { CodexRecoveryReader } from "./adapters/codex/recovery-reader.js";
 import { RecoveryService } from "./recovery/service.js";
+import { TimedPlanRepository } from "./storage/timed-plan-repository.js";
+import { TimedDispatch } from "./storage/timed-dispatch.js";
+import { timedContext } from "./storage/timed-context.js";
 
 export function createApp(config: AppConfig, clock: Clock = systemClock) {
   const provider = config.provider === "mock" ? new MockQuotaProvider(clock) : new AppServerQuotaProvider(config.codex, clock);
@@ -25,6 +28,10 @@ export function createApp(config: AppConfig, clock: Clock = systemClock) {
   let opening: Promise<SqliteStore> | undefined;
   let closed = false;
   let continuous: ContinuousQuotaMonitor | undefined;
+  let timedRepository: TimedPlanRepository | undefined;
+  let timedEngine: TimedDispatch | undefined;
+  async function timed() { return timedRepository ??= new TimedPlanRepository((await storage()).database, timedContext(config), clock); }
+  async function timedDispatch() { return timedEngine ??= new TimedDispatch(await timed()); }
   async function storage(): Promise<SqliteStore> {
     if (closed) throw new Error("Application is closed");
     opening ??= (async () => {
@@ -49,7 +56,7 @@ export function createApp(config: AppConfig, clock: Clock = systemClock) {
     return continuous;
   }
   return {
-    status: () => monitor.sample(), storage, taskService, monitoring,
+    status: () => monitor.sample(), storage, taskService, monitoring, timed, timedDispatch,
     async recovery() {
       const current = await storage();
       await current.check();
@@ -58,7 +65,7 @@ export function createApp(config: AppConfig, clock: Clock = systemClock) {
     },
     async scheduling() {
       const current = await storage();
-      return new SchedulerService(new SqliteSchedulerRepository(current.database, streamKey, config.scheduler?.trigger ?? "available", config, clock),
+      return new SchedulerService(new SqliteSchedulerRepository(current.database, streamKey, config.scheduler?.trigger ?? "available", config, clock, await timedDispatch()),
         await monitoring(), new ManualExecutionService(config, current, clock), { provider: config.provider, persistent: config.storage.databasePath !== ":memory:" });
     },
     async execution() { return new ManualExecutionService(config, await storage(), clock); },

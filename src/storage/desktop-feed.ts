@@ -27,6 +27,9 @@ export function desktopEvents(db: Database, scope: string, requested: FeedCursor
       const rows = db.connection.prepare(`SELECT e.sequence,e.created_at,e.type,e.data_json AS event_json,r.data_json FROM ${table} e LEFT JOIN runs r ON r.id=e.run_id
         WHERE e.sequence>? ORDER BY e.sequence LIMIT 128`).all(cursor[stream]);
       for (const row of rows) {
+        if (stream === "recovery" && ["timed_missed", "timed_attention", "timed_ready"].includes(String(row.type))) {
+          events.push({ key: digest([scope, "timed", row.sequence]), kind: String(row.type) as NoticeKind, runId: null, target: "schedules", createdAt: String(row.created_at) });
+        }
         if (row.data_json && ["execution_finished", "recovery_confirmed", "needs_attention", "execution_released"].includes(String(row.type))) {
           const run = readRun(row.data_json);
           const meta = JSON.parse(String(row.event_json)) as { status?: string };

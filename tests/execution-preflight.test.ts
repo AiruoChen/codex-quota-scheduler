@@ -11,6 +11,9 @@ import { SchedulerService } from "../src/scheduler/service.js";
 import { SqliteMonitorRepository } from "../src/storage/monitor-repository.js";
 import { SqliteSchedulerRepository } from "../src/storage/scheduler-repository.js";
 import { SqliteStore } from "../src/storage/sqlite-store.js";
+import { TimedPlanRepository } from "../src/storage/timed-plan-repository.js";
+import { TimedDispatch } from "../src/storage/timed-dispatch.js";
+import { timedContext } from "../src/storage/timed-context.js";
 
 async function setup(scenario = "success", initial = Date.parse("2026-10-26T00:00:00Z"), maxAge = 1000) {
   const dir = await mkdtemp(join(tmpdir(), "execution-preflight-"));
@@ -130,3 +133,26 @@ test("会话准备期间时钟回退时保持等待，不以新时间戳掩盖�
     assert.equal((await e.methods()).includes("turn/start"), false);
   } finally { await e.cleanup(); }
 });
+
+for (const change of ["deadline", "paused"] as const) {
+  test(`定时领取后真实协议替身预检跨过 ${change}，最终发送边界不调用 turn/start`, async () => {
+    const e = await setup("success", undefined, 1000000);
+    try {
+      const plans = new TimedPlanRepository(e.store.database, timedContext(e.config), e.clock);
+      const timed = new TimedDispatch(plans, () => e.clock.now().getTime());
+      timed.maintain(e.monitor.record({ snapshot: { ...e.snapshot(), cli: { version: "0.160.0-fixture" } } }));
+      const draft = plans.save({ name: "Synthetic timed preflight", taskId: "one", taskRevision: 1, mode: "at_time", zone: "UTC", date: "2026-10-26", time: "00:01", repeat: "once", endDate: null, graceMinutes: 1, catchUp: false, window: null });
+      const p = plans.enable(draft.id, draft.revision, plans.confirmation(draft.id, draft.revision).context!, true, false, false);
+      const scheduler = new SqliteSchedulerRepository(e.store.database, quotaStreamKey(e.config), "available", e.config, e.clock, timed);
+      const token = scheduler.acquire(); scheduler.resume(); e.advance(60000);
+      const claimed = scheduler.claimNext(token, e.monitor.record({ snapshot: { ...e.snapshot(), cli: { version: "0.160.0-fixture" } } })); assert.equal(claimed.action, "run");
+      if (claimed.action !== "run") return;
+      e.observe(type => { if (type === "thread_ready") { if (change === "deadline") e.advance(61000); else plans.setState(p.id, p.revision, "paused"); } });
+      const result = await e.service.executeClaimed(claimed.run.id, new AbortController().signal, undefined, claimed.expectedAccount);
+      assert.equal(result.status, "failed"); assert.match(result.error!, change === "deadline" ? /TIMED_DEADLINE/ : /TIMED_PLAN_CHANGED/);
+      assert.equal((await e.methods()).includes("turn/start"), false);
+      assert.equal(e.store.execution.events(result.id).some(v => v.type === "submission_started"), false);
+      scheduler.complete(token, result.id); scheduler.release(token); await e.store.check();
+    } finally { await e.cleanup(); }
+  });
+}

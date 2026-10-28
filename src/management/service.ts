@@ -19,6 +19,8 @@ import { CodexCatalog } from "../adapters/codex/catalog.js";
 import { resolveTaskTarget } from "./task-target.js";
 import { ContinuationRepository } from "../storage/continuation-repository.js";
 import { runDiagnostics } from "./run-diagnostics.js";
+import { hasResumeAuthorization } from "../domain/resume-authorization.js";
+import { catalogScope } from "../adapters/codex/catalog.js";
 
 export interface ManagementJob {
   id: number;
@@ -118,6 +120,7 @@ export class ManagementService {
         status: run.status, startedAt: run.startedAt } : null,
       events: monitor.repository.events().slice(-30),
       scheduler: (await this.app.scheduling()).repository.status(),
+      timed: { protections: (await this.app.timed()).protections(), enabled: (await this.app.timed()).list().filter(p => p.state === "enabled").length },
       recovery: (await this.recovery()).repository.report(),
       jobs: this.works.map((work) => ({ ...work.job })), loop: this.loop?.job.state === "running" ? this.loop.job.kind : null };
   }
@@ -129,6 +132,36 @@ export class ManagementService {
   async runDiagnostics(id: string) {
     const store = await this.app.storage(), target = (await this.recovery()).repository.target(id);
     return runDiagnostics(target.run, store.execution.events(id), this.clock.now(), store.execution.active()?.runId === id, target.origin !== null);
+  }
+  async timedPlans() {
+    const plans = await this.app.timed();
+    return { plans: plans.list(), protections: plans.protections(), now: this.clock.now().toISOString(),
+      source: this.config.provider, windows: plans.fresh()?.snapshot?.buckets.find(b => b.id === this.config.limitId)?.windows ?? [] };
+  }
+
+  async timedDiagnostics(id: string) {
+    const plans = await this.app.timed(), p = plans.get(id), store = await this.app.storage();
+    const view = plans.list().find(v => v.id === id)!;
+    // Deliberate allowlist: no task names, prompt snapshots, paths, thread IDs, account or config.
+    return { schemaVersion: 1, generatedAt: this.clock.now().toISOString(), planId: p.id, revision: p.revision, state: p.state,
+      reason: p.reason, mode: p.input.mode, repeat: p.input.repeat, zone: p.input.zone, catchUp: p.input.catchUp,
+      taskRevision: p.task.revision, enabledAt: p.enabledAt, next: view.next,
+      occurrences: view.occurrences.map(o => ({ id: o.id, planId: o.planId, planRevision: o.planRevision, date: o.date,
+        sequence: o.sequence, runId: o.runId, state: o.state, reason: o.reason, createdAt: new Date(o.createdAt).toISOString(),
+        dueAt: new Date(o.dueAt).toISOString(), deadlineAt: new Date(o.deadlineAt).toISOString(), startAt: new Date(o.startAt).toISOString(),
+        targetResetAt: o.targetResetAt ? new Date(o.targetResetAt).toISOString() : null,
+        protectionEndAt: o.protectionEndAt ? new Date(o.protectionEndAt).toISOString() : null,
+        actualStartedAt: o.actualStartedAt ? new Date(o.actualStartedAt).toISOString() : null,
+        submittedAt: o.submittedAt ? new Date(o.submittedAt).toISOString() : null, runStatus: o.runStatus,
+        observation: o.observation ? { fetchedAt: new Date(o.observation.fetchedAt).toISOString(),
+          actualResetAt: o.observation.actualResetAt ? new Date(o.observation.actualResetAt).toISOString() : null,
+          remainingPercent: o.observation.remainingPercent, alignment: o.observation.alignment, ready: o.observation.ready,
+          readyCheckedAt: o.observation.readyCheckedAt ? new Date(o.observation.readyCheckedAt).toISOString() : null,
+          firstResetAt: o.observation.firstResetAt ? new Date(o.observation.firstResetAt).toISOString() : null,
+          resetConfirmedAt: o.observation.resetConfirmedAt ? new Date(o.observation.resetConfirmedAt).toISOString() : null } : null })),
+      skippedLocalDates: store.database.connection.prepare("SELECT key FROM metadata WHERE key GLOB ?").all(`timed_gap:${p.id}:*`).map(r => String(r.key).slice(-10)),
+      protections: plans.protections().filter(h => h.planId === id).map(h => ({ planId: h.planId, endAt: h.endAt })),
+      scheduler: { paused: (await this.app.scheduling()).repository.status().paused, running: this.loop?.job.kind === "scheduler" && this.loop.job.state === "running" } };
   }
 
   /** A deliberately small allowlist for user-exported diagnostics. Never serialize state, config or logs here. */
@@ -235,7 +268,8 @@ export class ManagementService {
           (await this.app.monitoring()).requestSample();
           return { requested: true };
         }
-        return await (await this.app.monitoring()).sample();
+        const update = await (await this.app.monitoring()).sample();
+        (await this.app.timedDispatch()).maintain(update); return update;
       }
       if (!["monitor-start", "monitor-stop", "scheduler-start", "scheduler-stop"].includes(action)) throw new AppError("INVALID_ARGUMENT", "未知监控操作。");
       if (action === "scheduler-start") {
@@ -259,7 +293,7 @@ export class ManagementService {
       if (kind === "scheduler") scheduler.repository.pause("worker_started");
       this.dispatch = null;
       this.loop = this.launch(kind, (signal) => kind === "monitor"
-        ? monitor.run(signal, (update) => { if (update.events.length) this.log("quota_changed"); })
+        ? monitor.run(signal, async (update) => { (await this.app.timedDispatch()).maintain(update); if (update.events.length) this.log("quota_changed"); })
         : scheduler.run(signal, (event) => { this.dispatch = { reason: event.reason ?? null, event: event.event, observedAt: this.clock.now().toISOString() }; this.log(event.event); }));
       return { ...this.loop.job };
     } finally { this.changingLoop = false; }
@@ -278,6 +312,22 @@ export class ManagementService {
     const scheduler = (await this.app.scheduling()).repository;
     this.ensureOpen();
     if (action === "task-save") return this.saveTask(data);
+    if (action.startsWith("timed-")) {
+      const plans = await this.app.timed();
+      if (action === "timed-preview") return plans.preview(data.definition);
+      if (action === "timed-save") return plans.save(data.definition, data.id === undefined ? undefined : requireString(data.id, "id"), data.revision === undefined ? undefined : revision(data.revision));
+      const id = requireString(data.id, "id"), rev = revision(data.revision);
+      if (action === "timed-confirmation") return plans.confirmation(id, rev);
+      if (data.confirm !== true) throw new AppError("CONFIRM_REQUIRED", "请确认定时计划的执行或保护范围。");
+      if (action === "timed-enable") {
+        const p = plans.get(id), task = p.task.definition, snapshot = plans.fresh()?.snapshot;
+        if (task.environment && snapshot && task.environment.scope !== catalogScope(this.config.codex, snapshot.account)) throw new AppError("CATALOG_SCOPE_CHANGED", "任务与当前账户来源不一致，请编辑任务并重新核对。");
+        if (task.session.mode === "resume" && !task.environment?.permissionsVerified && !hasResumeAuthorization(task)) throw new AppError("CODEX_ENVIRONMENT_UNVERIFIED", "请先为续接任务明确授权，再启用计划。");
+        return plans.enable(id, rev, requireString(data.context, "context"), true, data.estimate === true, data.protection === true);
+      }
+      if (action === "timed-pause" || action === "timed-cancel") return plans.setState(id, rev, action === "timed-pause" ? "paused" : "cancelled");
+      throw new AppError("INVALID_ARGUMENT", "未知定时操作。");
+    }
     if (action === "task-sort-save") {
       if (data.sort !== "created_asc" && data.sort !== "created_desc") throw new AppError("INVALID_ARGUMENT", "任务排序方式无效。");
       store.database.transaction(() => store.database.connection.prepare("INSERT INTO metadata(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(`ui.taskSort:${this.viewScope()}`, String(data.sort)));
@@ -315,8 +365,8 @@ export class ManagementService {
       const execution = await this.app.execution();
       const recovery = await this.recovery();
       return { ...this.launch(action, async (signal, started) => {
-        if (action === "run") return execution.runTask(id, signal, started, data.revision === undefined ? undefined : revision(data.revision));
-        if (action === "run-start") return execution.start(id, signal, started);
+        if (action === "run") return execution.runTask(id, signal, started, data.revision === undefined ? undefined : revision(data.revision), data.allowProtected === true);
+        if (action === "run-start") return execution.start(id, signal, started, data.allowProtected === true);
         started(id);
         const result = action === "inspect" ? await recovery.inspect(id, signal) : await recovery.reconcile(id, signal);
         // The durable run/events provide results; a pending/unknown read is not a confirmed recovery.

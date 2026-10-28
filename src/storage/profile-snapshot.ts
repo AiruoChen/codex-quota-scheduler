@@ -3,9 +3,9 @@ import { DatabaseSync } from "node:sqlite";
 import type { DataInspection } from "../domain/data-transfer.js";
 import { AppError } from "../shared/errors.js";
 import { localProcesses } from "../shared/process.js";
-import { dispatchQueueView, removableDispatchQueueView, migrations } from "./database.js";
+import { dispatchQueueView, removableDispatchQueueView, timedDispatchQueueView, migrations } from "./database.js";
 
-const names = new Set(["queue_removals", "metadata", "tasks", "runs", "task_versions", "execution_lock", "execution_events", "quota_monitor_state",
+const names = new Set(["timed_plans", "timed_occurrences", "timed_queue", "queue_order", "queue_removals", "metadata", "tasks", "runs", "task_versions", "execution_lock", "execution_events", "quota_monitor_state",
   "quota_monitor_events", "quota_monitor_reset_keys", "scheduler_control", "scheduler_queue", "scheduler_worker", "scheduler_streams",
   "scheduler_attention_ack", "execution_origins", "recovery_events", "task_create_requests", "continuation_chains", "continuation_plans", "queue_positions", "continuation_queue"]);
 
@@ -25,7 +25,7 @@ function inspect(db: DatabaseSync): DataInspection {
   const objects = db.prepare("SELECT type,name,sql FROM sqlite_master WHERE type IN ('trigger','view') ORDER BY name").all();
   const normalize = (sql: string) => sql.replace(/\s+/g, " ").trim();
   if (schema < 1 || (app !== 0 && app !== 0x43515343) || !["metadata", "tasks", "runs"].every((name) => tables.some((row) => row.name === name))
-    || tables.some((row) => !names.has(String(row.name))) || objects.some(row => row.type !== "view" || row.name !== "dispatch_queue" || normalize(String(row.sql)) !== normalize(schema >= 10 ? removableDispatchQueueView : dispatchQueueView))) {
+    || tables.some((row) => !names.has(String(row.name))) || objects.some(row => row.type !== "view" || row.name !== "dispatch_queue" || normalize(String(row.sql)) !== normalize(schema >= 11 ? timedDispatchQueueView : schema >= 10 ? removableDispatchQueueView : dispatchQueueView))) {
     throw new AppError("STORAGE_FOREIGN", "源文件不是可识别的项目数据库，或含有不支持的对象。");
   }
   const checks = db.prepare("PRAGMA quick_check").all();

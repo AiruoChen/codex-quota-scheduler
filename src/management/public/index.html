@@ -16,6 +16,7 @@
     <nav aria-label="主要导航">
       <a href="#overview" data-view="overview"><span aria-hidden="true">◫</span>运行概览</a>
       <a href="#tasks" data-view="tasks"><span aria-hidden="true">☷</span>任务管理</a>
+      <a href="#schedules" data-view="schedules"><span aria-hidden="true">◷</span>定时计划</a>
       <a href="#queue" data-view="queue"><span aria-hidden="true">≡</span>调度队列</a>
       <a href="#runs" data-view="runs"><span aria-hidden="true">↗</span>运行记录</a>
       <a href="#recovery" data-view="recovery"><span aria-hidden="true">◇</span>异常与恢复</a>
@@ -42,6 +43,12 @@
       </div>
       <article class="panel"><div class="panel-heading"><h2>最近动态</h2><span class="subtle">仅显示已保存的监控事件</span></div><div id="monitor-events"></div></article>
       <article id="jobs-panel" class="panel" hidden><div class="panel-heading"><h2>后台操作</h2><span class="subtle">关闭页面后仍继续运行</span></div><div id="jobs"></div></article>
+    </section>
+    <section id="schedules" class="view" hidden>
+      <div class="section-heading"><div><h2>按时间安排任务</h2><p>保存草稿不会执行。启用后仍需启动调度进程并恢复派发，电脑和后台须保持运行。</p></div><button id="new-schedule" class="primary">＋ 新建计划</button></div>
+      <p id="schedule-status" class="notice" role="status"></p>
+      <p id="schedule-protection" class="hint"></p>
+      <div id="schedule-items"></div>
     </section>
     <section id="queue" class="view" hidden>
       <div class="section-heading"><div><h2>按快照串行派发</h2><p>编辑任务不会改变已经入队的版本。</p></div><a href="#tasks" class="text-link">管理任务 ↗</a></div>

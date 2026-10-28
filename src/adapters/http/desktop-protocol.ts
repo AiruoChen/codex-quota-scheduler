@@ -21,7 +21,7 @@ export function readDesktopFeed(value: unknown): DesktopFeed {
     || typeof value.baseline !== "boolean" || typeof value.pendingAttention !== "boolean" || !Array.isArray(value.events) || value.events.length > 384) invalid();
   for (const event of value.events) {
     if (!isRecord(event) || typeof event.key !== "string" || !/^[a-f0-9]{64}$/.test(event.key)
-      || !noticeKinds.includes(event.kind as typeof noticeKinds[number]) || !["overview", "runs", "recovery"].includes(String(event.target))
+      || !noticeKinds.includes(event.kind as typeof noticeKinds[number]) || !["overview", "runs", "recovery", "schedules"].includes(String(event.target))
       || !(event.runId === null || typeof event.runId === "string" && event.runId.length > 0 && event.runId.length <= 200)
       || typeof event.createdAt !== "string" || !Number.isFinite(Date.parse(event.createdAt))) invalid();
   }

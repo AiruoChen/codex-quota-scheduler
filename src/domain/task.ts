@@ -41,6 +41,7 @@ export interface TaskRun {
   output: string;
   error: string | null;
   continuation?: import("./continuation.js").ContinuationLink;
+  timed?: import("./timed-plan.js").TimedRunLink;
 }
 
 export interface StoredTask extends TaskDefinition {
@@ -93,6 +94,7 @@ export interface ExecutionOutcome {
 }
 
 export interface ExecutionSink {
+  admit?(): void;
   origin(origin: import("./recovery.js").ExecutionOrigin): void;
   event(type: string, data: Record<string, unknown>): void;
   thread(threadId: string): void;

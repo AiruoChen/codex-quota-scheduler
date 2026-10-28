@@ -9,6 +9,8 @@ export const dispatchQueueView = `CREATE VIEW dispatch_queue AS SELECT p.sequenc
 export const removableDispatchQueueView = `CREATE VIEW dispatch_queue AS
      SELECT p.sequence,q.run_id,q.task_id,q.task_revision FROM scheduler_queue q JOIN queue_positions p ON p.run_id=q.run_id WHERE NOT EXISTS (SELECT 1 FROM queue_removals x WHERE x.run_id=q.run_id)
      UNION ALL SELECT p.sequence,q.run_id,q.task_id,q.task_revision FROM continuation_queue q JOIN queue_positions p ON p.run_id=q.run_id WHERE NOT EXISTS (SELECT 1 FROM queue_removals x WHERE x.run_id=q.run_id)`;
+export const timedDispatchQueueView = `${removableDispatchQueueView}
+     UNION ALL SELECT p.sequence,q.run_id,q.task_id,q.task_revision FROM timed_queue q JOIN queue_positions p ON p.run_id=q.run_id WHERE NOT EXISTS (SELECT 1 FROM queue_removals x WHERE x.run_id=q.run_id)`;
 
 export const migrations = [
   `CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;
@@ -66,6 +68,15 @@ export const migrations = [
   `CREATE TABLE queue_removals (run_id TEXT PRIMARY KEY REFERENCES runs(id), removed_at TEXT NOT NULL, previous_status TEXT NOT NULL) STRICT;
    DROP VIEW dispatch_queue;
    ${removableDispatchQueueView};`,
+  `CREATE TABLE timed_plans (id TEXT PRIMARY KEY, data_json TEXT NOT NULL) STRICT;
+   CREATE TABLE timed_occurrences (sequence INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE,
+     plan_id TEXT NOT NULL REFERENCES timed_plans(id), target_date TEXT NOT NULL, data_json TEXT NOT NULL, UNIQUE(plan_id,target_date)) STRICT;
+   CREATE TABLE timed_queue (run_id TEXT PRIMARY KEY REFERENCES runs(id), occurrence_id TEXT NOT NULL UNIQUE REFERENCES timed_occurrences(id),
+     task_id TEXT NOT NULL REFERENCES tasks(id), task_revision INTEGER NOT NULL) STRICT;
+   CREATE TABLE queue_order (singleton INTEGER PRIMARY KEY CHECK(singleton=1), last_sequence INTEGER NOT NULL) STRICT;
+   INSERT INTO queue_order SELECT 1,coalesce(max(sequence),0) FROM queue_positions;
+   DROP VIEW dispatch_queue;
+   ${timedDispatchQueueView};`,
 ];
 
 export class Database {

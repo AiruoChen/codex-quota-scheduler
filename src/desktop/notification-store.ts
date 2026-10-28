@@ -29,7 +29,7 @@ export function readDesktopState(input: unknown): DesktopState {
     if (!isRecord(event) || typeof event.id !== "string" || !/^[a-f0-9-]{36}$/.test(event.id) || !scope(event.scope)
       || ![null, "mock", "codex"].includes(event.provider as null)
       || typeof event.key !== "string" || event.key.length > 256 || !noticeKinds.includes(event.kind as typeof noticeKinds[number])
-      || !["overview", "runs", "recovery"].includes(String(event.target)) || !(event.runId === null || typeof event.runId === "string" && event.runId.length > 0 && event.runId.length <= 200)
+      || !["overview", "runs", "recovery", "schedules"].includes(String(event.target)) || !(event.runId === null || typeof event.runId === "string" && event.runId.length > 0 && event.runId.length <= 200)
       || typeof event.createdAt !== "string" || !Number.isFinite(Date.parse(event.createdAt)) || !["disabled", "attempted", "unsupported", "failed", "local"].includes(String(event.delivery))) invalid();
   }
   return input as unknown as DesktopState;

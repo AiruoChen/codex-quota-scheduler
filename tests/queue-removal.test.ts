@@ -61,7 +61,7 @@ test("第九版数据迁移保留快照，移除后重启和备份仍保留历�
   const e = await fixture(path); let store = e.store;
   try {
     const original = await store.runs.get(e.run.id);
-    store.database.connection.exec(`DROP VIEW dispatch_queue; DROP TABLE queue_removals; ${dispatchQueueView}; PRAGMA user_version=9`);
+    store.database.connection.exec(`DROP VIEW dispatch_queue; DROP TABLE timed_queue; DROP TABLE timed_occurrences; DROP TABLE timed_plans; DROP TABLE queue_order; DROP TABLE queue_removals; ${dispatchQueueView}; PRAGMA user_version=9`);
     store.close(); store = new SqliteStore(path, clock);
     assert.equal(store.database.connection.prepare("PRAGMA user_version").get()!.user_version, migrations.length);
     assert.deepEqual(await store.runs.get(e.run.id), original);

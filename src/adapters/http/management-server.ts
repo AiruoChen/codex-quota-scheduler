@@ -91,6 +91,8 @@ export async function serveManagement(service: ManagementService, options: Serve
         if (path === "/api/state") return reply(response, 200, await service.state());
         if (path === "/api/tasks") return reply(response, 200, await service.tasks());
         if (path === "/api/preferences") return reply(response, 200, await service.preferences());
+        if (path === "/api/timed-plans") return reply(response, 200, await service.timedPlans());
+        if (path === "/api/timed-plan/diagnostics") return reply(response, 200, await service.timedDiagnostics(id));
         if (path === "/api/tasks/page") return reply(response, 200, await store.tasks.query({ search: url.searchParams.get("search") ?? "",
           enabled: (url.searchParams.get("enabled") ?? "all") as "all" | "enabled" | "disabled",
           sort: (url.searchParams.get("sort") ?? "created_desc") as "created_desc" | "created_asc",

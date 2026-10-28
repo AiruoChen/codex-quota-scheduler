@@ -12,6 +12,9 @@ import { SqliteMonitorRepository } from "../storage/monitor-repository.js";
 import { MonitoredExecutionQuota } from "./quota-guard.js";
 import { rpcDiagnostic } from "../adapters/codex/rpc-errors.js";
 import { ContinuationRepository } from "../storage/continuation-repository.js";
+import { TimedPlanRepository } from "../storage/timed-plan-repository.js";
+import { TimedDispatch } from "../storage/timed-dispatch.js";
+import { timedContext } from "../storage/timed-context.js";
 
 export class ManualExecutionService {
   private readonly executor: TaskExecutor;
@@ -20,14 +23,25 @@ export class ManualExecutionService {
       new SqliteMonitorRepository(store.database, quotaStreamKey(config), config, clock), config, clock));
   }
 
-  async runTask(taskId: string, signal: AbortSignal, started?: (id: string) => void, expectedRevision?: number): Promise<TaskRun> {
+  async runTask(taskId: string, signal: AbortSignal, started?: (id: string) => void, expectedRevision?: number, allowProtected = false): Promise<TaskRun> {
     this.requireReal();
-    return this.executeClaimed(this.store.execution.claimNew(taskId, expectedRevision).id, signal, started);
+    const id = this.store.database.transaction(() => {
+      new TimedPlanRepository(this.store.database, timedContext(this.config), this.clock).assertManualAllowed(allowProtected);
+      const run = this.store.execution.claimInside(this.store.runs.insert(taskId, expectedRevision).id);
+      if (allowProtected) this.store.execution.event(run.id, "timed_manual_confirmed", {});
+      return run.id;
+    });
+    return this.executeClaimed(id, signal, started);
   }
 
-  async start(id: string, signal: AbortSignal, started?: (id: string) => void): Promise<TaskRun> {
+  async start(id: string, signal: AbortSignal, started?: (id: string) => void, allowProtected = false): Promise<TaskRun> {
     this.requireReal();
-    return this.executeClaimed(this.store.execution.claim(id).id, signal, started);
+    this.store.database.transaction(() => {
+      new TimedPlanRepository(this.store.database, timedContext(this.config), this.clock).assertManualAllowed(allowProtected);
+      this.store.execution.claimInside(id);
+      if (allowProtected) this.store.execution.event(id, "timed_manual_confirmed", {});
+    });
+    return this.executeClaimed(id, signal, started);
   }
 
   async executeClaimed(id: string, signal: AbortSignal, started?: (id: string) => void, expectedAccount?: QuotaSnapshot["account"]): Promise<TaskRun> {
@@ -50,6 +64,13 @@ export class ManualExecutionService {
       } catch (error) { persistenceError = error; controller.abort("storage_error"); }
     }, 200);
     const sink: ExecutionSink = {
+      admit: () => {
+        const plans = new TimedPlanRepository(this.store.database, timedContext(this.config), this.clock);
+        this.store.database.transaction(() => {
+          if (expectedAccount || run.timed || run.continuation) new TimedDispatch(plans).assertScheduledAllowed(run);
+          else plans.assertManualAllowed(this.store.execution.events(id).some(e => e.type === "timed_manual_confirmed"));
+        });
+      },
       origin: (origin) => this.store.execution.origin(id, origin),
       event: (type, data) => this.store.execution.event(id, type, data),
       thread: (threadId) => this.store.execution.progress(id, { threadId }),

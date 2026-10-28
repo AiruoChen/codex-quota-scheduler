@@ -33,7 +33,9 @@ export function taskPreview(context: UiContext) {
     if (!preview) return;
     const selected = preview, action = mode, current = sequence;
     try {
-      const result = await context.act(action, { id: selected.id, revision: selected.revision }, action === "enqueue" ? "此版本的快照已入队；派发状态保持不变。" : "已受理手动执行，请查看最终状态。") as TaskRun & { runId?: string };
+      const protectedTime = action === "run" && !!context.state()?.timed.protections.length;
+      if (protectedTime && !window.confirm("当前处于额度保护时段。允许本次手动执行消耗预留额度？")) return;
+      const result = await context.act(action, { id: selected.id, revision: selected.revision, ...(protectedTime ? { allowProtected: true } : {}) }, action === "enqueue" ? "此版本的快照已入队；派发状态保持不变。" : "已受理手动执行，请查看最终状态。") as TaskRun & { runId?: string };
       if (current !== sequence) return;
       dialog.close();
       if (action === "run" && result.runId) await context.openRun(result.runId);

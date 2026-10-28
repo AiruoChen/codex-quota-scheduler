@@ -19,6 +19,7 @@ import { validateModel } from "./model-validation.js";
 import { inspectTurnEnvironmentOverride } from "./turn-environment-protocol.js";
 import { resumeMismatchDiagnostic, resumeMismatchMessage } from "./resume-diagnostics.js";
 import { ExecutionTrace } from "./execution-trace.js";
+import { timedAdmission } from "../../domain/timed-plan.js";
 
 type VerifiedQuota = QuotaSnapshot & { account: NonNullable<QuotaSnapshot["account"]> };
 const sameAccount = (a: NonNullable<QuotaSnapshot["account"]>, b: NonNullable<QuotaSnapshot["account"]>) =>
@@ -135,8 +136,12 @@ export class CodexExecutor implements TaskExecutor {
         sink.event("preflight_refreshed", { status: refreshed.status, reason: refreshed.reason });
         if (refreshed.status !== "available") return { status: "waiting_quota", output: "", error: `QUOTA_WAIT: ${refreshed.reason}` };
       }
-      const result = await runTurn(client, thread.id as string, run, signal, sink, () => continuation && !continuationReady(continuation.evidence, quota, this.config, this.clock.now())
-        ? { status: "unknown", reason: "unknown_quota" } : this.quotaGuard.check(quota));
+      const result = await runTurn(client, thread.id as string, run, signal, sink, () => {
+        const admission = run.timed ? timedAdmission(run.timed, this.clock.now().getTime()) : null;
+        if (admission) throw new AppError(admission === "not_due" ? "TIMED_NOT_DUE" : "TIMED_DEADLINE", "本实例不在允许启动的时段内，未发送指令。");
+        return continuation && !continuationReady(continuation.evidence, quota, this.config, this.clock.now())
+          ? { status: "unknown", reason: "unknown_quota" } : this.quotaGuard.check(quota);
+      });
       if (result.quotaFailure && task.quotaContinuation?.enabled && !signal.aborted) {
         try {
           const fresh = await this.verifiedQuota(client, launch.version, signal, quota.account);

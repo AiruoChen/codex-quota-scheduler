@@ -508,3 +508,27 @@ test("托盘后台接口校验控制密钥与实例；暂停不停止服务或�
     assert.equal((await env.service.state()).scheduler.paused, true); assert.equal((await env.service.state()).loop, "monitor");
   } finally { await env.cleanup(); }
 });
+
+test("定时计划接口受会话和CSRF保护，草稿无执行，导出只含时间和固定诊断字段", async () => {
+  const e = await setup(); try {
+    await e.task("PRIVATE_TIMED_API_PROMPT");
+    assert.equal((await fetch(e.server.url + "/api/timed-plans")).status, 403);
+    const definition = { name: "PRIVATE_PLAN_NAME", taskId: "one", taskRevision: 1, mode: "at_time", zone: "UTC", date: new Date(Date.now() + 86400000).toISOString().slice(0, 10), time: "12:00", repeat: "once", endDate: null, graceMinutes: 5, catchUp: false, window: null };
+    assert.equal((await fetch(e.server.url + "/api/action", { method: "POST", headers: { cookie: e.cookie, "Content-Type": "application/json" }, body: JSON.stringify({ action: "timed-save", definition }) })).status, 403);
+    const response = await e.action("timed-save", { definition }); assert.equal(response.status, 200);
+    const p = await response.json() as { id: string; revision: number };
+    const confirmation = await (await e.action("timed-confirmation", p)).json() as { canEnable: boolean };
+    assert.equal(confirmation.canEnable, false); const denied = await e.action("timed-enable", { ...p, confirm: true, context: "invalid" });
+    assert.equal(denied.status, 400); assert.equal((await denied.json() as { error: { code: string } }).error.code, "TIMED_REQUIRES_QUOTA");
+    assert.equal((await e.service.state()).scheduler.paused, true);
+    assert.deepEqual(await (await e.service.app.storage()).runs.recent(), []);
+    assert.equal((await fetch(e.server.url + `/api/timed-plan/diagnostics?id=${p.id}`)).status, 403);
+    const report = await e.get(`/api/timed-plan/diagnostics?id=${p.id}`), serialized = JSON.stringify(report);
+    for (const value of ["PRIVATE", e.dir, "test-secret", "promptSnapshot", "threadId"]) assert.ok(!serialized.includes(value));
+    assert.equal(report.state, "draft"); assert.deepEqual(report.occurrences, []);
+    const plans = await e.service.app.timed(), slot = plans.preview(definition).slots[0]!;
+    const record = { ...slot, id: randomUUID(), planId: p.id, planRevision: p.revision, sequence: null, runId: null, state: "pending", reason: null, createdAt: new Date().toISOString(), observation: null, raw: "PRIVATE_RAW_ERROR", promptSnapshot: "PRIVATE_CONTENT" };
+    (await e.service.app.storage()).database.connection.prepare("INSERT INTO timed_occurrences(id,plan_id,target_date,data_json) VALUES (?,?,?,?)").run(record.id, p.id, slot.date, JSON.stringify(record));
+    const projected = JSON.stringify(await e.get(`/api/timed-plan/diagnostics?id=${p.id}`)); assert.ok(!projected.includes("PRIVATE")); assert.ok(!projected.includes("promptSnapshot"));
+  } finally { await e.cleanup(); }
+});

@@ -32,11 +32,14 @@ export class ContinuousQuotaMonitor {
     const feed = this.provider as Partial<QuotaFeed>;
     let hint = false;
     const unsubscribe = feed.subscribe?.(() => { hint = true; });
+    let discontinuityAt: string | undefined;
     try {
       for (let index = 0; index < samples && !signal.aborted; index++) {
         hint = false;
         this.requested = false;
         const update = await this.sample(signal);
+        if (discontinuityAt) update.discontinuityAt = discontinuityAt;
+        discontinuityAt = undefined;
         await onUpdate(update);
         if (index + 1 >= samples || signal.aborted) break;
         let remaining = Math.max(1000, Date.parse(update.state.nextPollAt) - this.clock.now().getTime());
@@ -48,7 +51,7 @@ export class ContinuousQuotaMonitor {
           await this.waiter.sleep(step, signal);
           const now = this.clock.now().getTime();
           // A delayed timer after resume, or a wall-clock correction, requires a new read.
-          if (now < wall || now - wall > step + 2000) break;
+          if (now < wall || now - wall > step + 2000) { discontinuityAt = new Date(now).toISOString(); break; }
           remaining -= step; waited += step; wall = now;
         }
       }

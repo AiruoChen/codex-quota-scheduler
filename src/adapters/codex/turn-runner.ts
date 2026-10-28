@@ -99,6 +99,7 @@ export async function runTurn(client: StdioRpcClient, threadId: string, run: Tas
     const sandbox = execution?.sandbox ?? "read-only";
     const quota = beforeSubmit();
     if (quota.status !== "available") return { status: "waiting_quota", output: "", error: `QUOTA_WAIT: ${quota.reason}` };
+    sink.admit?.();
     sink.submitted();
     submitted = true;
     const response = await client.request("turn/start", {
@@ -136,7 +137,7 @@ export async function runTurn(client: StdioRpcClient, threadId: string, run: Tas
     const diagnostic = rpcDiagnostic(error);
     if (diagnostic) sink.event("codex_rpc_error", { ...diagnostic });
     const appError = error instanceof AppError ? error : new AppError("EXECUTION_FAILED", "手动执行失败。");
-    return { status: submitted ? "needs_attention" : "failed", output: output(), error: `${appError.code}: ${appError.message}` };
+    return { status: submitted ? "needs_attention" : appError.code === "TIMED_PROTECTION_ACTIVE" ? "waiting_quota" : "failed", output: output(), error: `${appError.code}: ${appError.message}` };
   } finally {
     signal.removeEventListener("abort", abort);
     offNotification(); offFailure();

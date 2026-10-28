@@ -32,7 +32,7 @@ export function runDetails(context: UiContext) {
       const cancel = button(detail.cancelRequested ? "等待取消确认" : "请求取消", () => context.confirmAction("cancel", run.id, "请求取消？运行中任务需要等待准确回合终止确认，未确认会保留待核对。"), "danger-button");
       cancel.disabled = detail.cancelRequested; controls.push(cancel);
     }
-    if (["queued", "waiting_quota"].includes(run.status) && !run.continuation) controls.push(realButton(button("手动启动此快照", () => context.confirmAction("run-start", run.id, "执行此持久化快照？将使用记录中的版本、项目和权限。")), context));
+    if (["queued", "waiting_quota"].includes(run.status) && !run.continuation && !run.timed) controls.push(realButton(button("手动启动此快照", () => context.confirmAction("run-start", run.id, "执行此持久化快照？将使用记录中的版本、项目和权限。")), context));
     if (run.continuation || run.taskSnapshot.quotaContinuation?.enabled) controls.push(button("停止此续接链", () => context.confirmAction("continuation-stop", run.id, "停止后续自动续接并取消尚未领取的子记录？已经运行的回合仍需单独请求取消。")));
     const exactTarget = !!run.threadId && !!run.turnId && !!detail.origin;
     if (run.status === "needs_attention") {
@@ -47,6 +47,7 @@ export function runDetails(context: UiContext) {
       ...(run.continuation ? [el("p", { class: "mode-banner" }, `额度续接 ${run.continuation.attempt}/${run.taskSnapshot.quotaContinuation?.maxAttempts ?? 0} · 根记录 ${run.continuation.rootRunId} · 父记录 ${run.continuation.parentRunId} · 父回合 ${run.continuation.parentTurnId}`)] : []),
       el("dl", { class: "detail-grid" }, ...Object.entries(fields).flatMap(([key, value]) => [el("dt", {}, key), el("dd", {}, value)])),
       el("div", { class: "detail-actions" }, ...controls),
+      ...(run.timed ? [el("p", { class: "mode-banner" }, `来源：定时计划 · 最早 ${time(run.timed.dueAt)} · 最晚启动 ${time(run.timed.deadlineAt)}${run.timed.continuation ? " · 已授权额度续接" : ""}`)] : []),
       ...(!exactTarget && run.status === "needs_attention" ? [el("p", { class: "mode-banner" }, "缺少准确会话、回合或来源，无法应用远端结果。请查看详细诊断，人工核对后移除或解除阻塞；原记录不会重发。")] : []),
       diagnosticControls(run.id),
       el("div", { class: "panel-heading" }, el("h2", {}, outputLabel(run)), button("复制输出", async () => { await copyText(run.output); notice("输出已复制。"); }), button("到输出末尾", async () => { const output = $("run-output"); output.scrollTop = output.scrollHeight; })),

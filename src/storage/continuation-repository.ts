@@ -7,6 +7,7 @@ import { readRun } from "./run-repository.js";
 import { promptHash } from "./task-repository.js";
 import { ExecutionRepository } from "./execution-repository.js";
 import { AppError } from "../shared/errors.js";
+import { insertQueuePosition } from "./queue-position.js";
 
 export function readInterruption(value: unknown): QuotaInterruption {
   try {
@@ -42,27 +43,30 @@ export class ContinuationRepository {
       taskSnapshot: { ...root.taskSnapshot, model, session: { mode: "resume", threadId: evidence.threadId } },
       promptSnapshot: prompt, promptHash: promptHash(prompt), status: "waiting_quota", createdAt: this.clock.now().toISOString(),
       startedAt: null, completedAt: null, threadId: null, turnId: null, output: "", error: "QUOTA_WAIT: awaiting_confirmed_reset",
+      ...(root.timed ? { timed: { ...root.timed, continuation: true } } : {}),
       continuation: { rootRunId: root.id, parentRunId: parent.id, parentTurnId: evidence.turnId, attempt, connectionKey: evidence.connectionKey, accountScope: evidence.accountScope, evidence } };
     readRun(JSON.stringify(child));
     this.db.connection.prepare("INSERT INTO runs VALUES (?,?,?)").run(child.id, child.taskId, JSON.stringify(child));
     this.db.connection.prepare("INSERT INTO continuation_plans VALUES (?,?,?,?)").run(parent.id, root.id, child.id, JSON.stringify(evidence));
     this.db.connection.prepare("INSERT INTO continuation_queue VALUES (?,?,?,?)").run(child.id, parent.id, child.taskId, child.taskRevision);
-    this.db.connection.prepare("INSERT INTO queue_positions(run_id) VALUES (?)").run(child.id);
+    insertQueuePosition(this.db, child.id);
     new ExecutionRepository(this.db, this.clock).event(parent.id, "quota_continuation_planned", { childRunId: child.id, rootRunId: root.id, attempt });
     return child;
   }
 
   stop(id: string): void {
-    this.db.transaction(() => {
-      const run = this.get(id), rootId = run.continuation?.rootRunId ?? run.id;
-      this.db.connection.prepare("INSERT INTO continuation_chains VALUES (?,1) ON CONFLICT(root_run_id) DO UPDATE SET stopped=1").run(rootId);
-      for (const row of this.db.connection.prepare("SELECT child_run_id FROM continuation_plans WHERE root_run_id=?").all(rootId)) {
-        const child = this.get(String(row.child_run_id));
-        if (["queued", "waiting_quota"].includes(child.status)) this.db.connection.prepare("UPDATE runs SET data_json=? WHERE id=?")
-          .run(JSON.stringify({ ...child, status: "cancelled", completedAt: this.clock.now().toISOString() }), child.id);
-      }
-      new ExecutionRepository(this.db, this.clock).event(id, "quota_continuation_stopped", {});
-    });
+    this.db.transaction(() => this.stopInside(id));
+  }
+  /** Caller owns the transaction, also used when cancelling a timed plan's future work. */
+  stopInside(id: string): void {
+    const run = this.get(id), rootId = run.continuation?.rootRunId ?? run.id;
+    this.db.connection.prepare("INSERT INTO continuation_chains VALUES (?,1) ON CONFLICT(root_run_id) DO UPDATE SET stopped=1").run(rootId);
+    for (const row of this.db.connection.prepare("SELECT child_run_id FROM continuation_plans WHERE root_run_id=?").all(rootId)) {
+      const child = this.get(String(row.child_run_id));
+      if (["queued", "waiting_quota"].includes(child.status)) this.db.connection.prepare("UPDATE runs SET data_json=? WHERE id=?")
+        .run(JSON.stringify({ ...child, status: "cancelled", completedAt: this.clock.now().toISOString() }), child.id);
+    }
+    new ExecutionRepository(this.db, this.clock).event(id, "quota_continuation_stopped", {});
   }
 
   private get(id: string): TaskRun {

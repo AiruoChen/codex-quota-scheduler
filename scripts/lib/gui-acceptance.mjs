@@ -10,7 +10,7 @@ export async function guiAcceptance(page, directory, checkpoint = () => {}) {
   const wait = source => page.wait(source.replaceAll("gui-smoke", taskId));
   const { call } = page;
   checkpoint("gui-route-tasks");
-  assert.equal(await evaluate("document.querySelectorAll('nav [data-view]').length"), 6);
+  assert.equal(await evaluate("document.querySelectorAll('nav [data-view]').length"), 7);
   await evaluate("location.hash='#tasks'");
   await wait("!document.getElementById('tasks').hidden");
   checkpoint("gui-create-open");
@@ -108,5 +108,5 @@ export async function guiAcceptance(page, directory, checkpoint = () => {}) {
     await writeFile(join(directory, `gui-${width}-${scale}.png`), Buffer.from(screenshot.data, "base64"));
   }
   await call("Emulation.clearDeviceMetricsOverride");
-  return { taskId, generatedId: true, defaultNewestFirst: true, independentReserves: true, sixRoutes: true, taskRevision: 2, immutableSnapshot: true, textEscaping: true, offlineUnknown: true, reconnect: true, responsiveLayouts: 4 };
+  return { taskId, generatedId: true, defaultNewestFirst: true, independentReserves: true, sevenRoutes: true, taskRevision: 2, immutableSnapshot: true, textEscaping: true, offlineUnknown: true, reconnect: true, responsiveLayouts: 4 };
 }

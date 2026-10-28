@@ -15,14 +15,19 @@ import { readStoredTask } from "./task-repository.js";
 import { assertRecoveryClear, recoveryEvent } from "./recovery-repository.js";
 import { continuationReady } from "../domain/continuation.js";
 import { readInterruption } from "./continuation-repository.js";
+import { insertQueuePosition } from "./queue-position.js";
+import { TimedDispatch, type TimedCandidate } from "./timed-dispatch.js";
+import { TimedPlanRepository } from "./timed-plan-repository.js";
 
 export class SqliteSchedulerRepository implements SchedulerRepository {
   private readonly context: string;
   private readonly execution: ExecutionRepository;
+  readonly timed: TimedDispatch;
   constructor(private readonly db: Database, private readonly streamKey: string, private readonly trigger: SchedulerTrigger,
-    private readonly policy: MonitorOptions, private readonly clock: Clock) {
+    private readonly policy: MonitorOptions, private readonly clock: Clock, timed?: TimedDispatch) {
     this.context = digest([streamKey, trigger]);
     this.execution = new ExecutionRepository(db, clock);
+    this.timed = timed ?? new TimedDispatch(new TimedPlanRepository(db, { provider: "codex", sourceKey: streamKey, streamKey, policy }, clock));
     this.db.transaction(() => { this.db.connection.prepare("INSERT OR IGNORE INTO scheduler_control VALUES (1,1,'not_enabled',?)").run(clock.now().toISOString()); });
   }
 
@@ -37,7 +42,7 @@ export class SqliteSchedulerRepository implements SchedulerRepository {
       if (!task.enabled) throw new AppError("TASK_DISABLED", "停用任务不能加入自动队列。");
       const run = new SqliteRunRepository(this.db, this.clock).insert(taskId);
       this.db.connection.prepare("INSERT INTO scheduler_queue(run_id,task_id,task_revision) VALUES (?,?,?)").run(run.id, taskId, task.revision);
-      this.db.connection.prepare("INSERT INTO queue_positions(run_id) VALUES (?)").run(run.id);
+      insertQueuePosition(this.db, run.id);
       this.execution.event(run.id, "scheduler_enqueued", { revision: task.revision });
       return run;
     });
@@ -139,6 +144,7 @@ export class SqliteSchedulerRepository implements SchedulerRepository {
       if (!cached) return { action: "wait", reason: "unknown_quota" };
       const state = readMonitorState(String(cached.data_json));
       if (state.revision !== update.state.revision) return { action: "wait", reason: "snapshot_changed" };
+      this.timed.maintainInside(update);
       const stream = this.db.connection.prepare("SELECT * FROM scheduler_streams WHERE context_key=?").get(this.context)!;
       let grant = stream.grant_key === null ? null : String(stream.grant_key);
       let assigned = stream.run_id === null ? null : String(stream.run_id);
@@ -164,11 +170,20 @@ export class SqliteSchedulerRepository implements SchedulerRepository {
       const eligibility = evaluateQuota(snapshot, this.policy, this.clock.now());
       if (eligibility.status !== "available") return { action: "wait", reason: eligibility.reason };
       if (!state.identity || !hasQuotaIdentity(snapshot.account)) return { action: "wait", reason: "identity_unknown" };
-      if (this.trigger === "refresh" && !grant) return { action: "wait", reason: "awaiting_refresh" };
-      const candidates = this.queued().filter((run) => ["queued", "waiting_quota"].includes(run.status))
-        .sort((a, b) => b.taskSnapshot.priority - a.taskSnapshot.priority);
-      for (const run of candidates) {
-        if (this.trigger === "refresh" && assigned !== null && assigned !== run.id) continue;
+      const positions = new Map(this.db.connection.prepare("SELECT run_id,sequence FROM queue_positions").all().map(row => [String(row.run_id), Number(row.sequence)]));
+      type Candidate = { kind: "timed"; value: TimedCandidate; priority: number; sequence: number } | { kind: "ordinary"; run: TaskRun; priority: number; sequence: number };
+      const candidates: Candidate[] = [
+        ...this.timed.candidates().map(value => ({ kind: "timed" as const, value, priority: value.priority, sequence: value.sequence })),
+        ...this.queued().filter(run => ["queued", "waiting_quota"].includes(run.status) && (!run.timed || !!run.continuation))
+          .map(run => ({ kind: "ordinary" as const, run, priority: run.taskSnapshot.priority, sequence: positions.get(run.id)! })),
+      ];
+      candidates.sort((a, b) => b.priority - a.priority || a.sequence - b.sequence);
+      for (const candidate of candidates) {
+        if (candidate.kind === "timed") return { action: "run", run: this.timed.claim(candidate.value), expectedAccount: snapshot.account };
+        const run = candidate.run;
+        if (this.trigger === "refresh" && (!grant || assigned !== null && assigned !== run.id)) continue;
+        if (this.timed.plans.protections(state).length) continue;
+        if (run.timed && this.timed.plans.get(run.timed.planId).state !== "enabled") continue;
         const row = this.db.connection.prepare("SELECT * FROM tasks WHERE id=? AND deleted_at IS NULL").get(run.taskId);
         if (!row || !readStoredTask(row).enabled || !run.taskSnapshot.enabled) continue;
         if (run.continuation) {
@@ -191,7 +206,8 @@ export class SqliteSchedulerRepository implements SchedulerRepository {
         this.execution.event(run.id, "scheduler_claimed", { trigger: this.trigger, grantKey: this.trigger === "refresh" ? grant : null });
         return { action: "run", run: claimed, expectedAccount: snapshot.account };
       }
-      return { action: "wait", reason: this.trigger === "refresh" && assigned !== null ? "refresh_consumed" : "empty_queue" };
+      return { action: "wait", reason: this.timed.plans.protections(state).length ? "timed_protection"
+        : this.trigger === "refresh" && !grant ? "awaiting_refresh" : this.trigger === "refresh" && assigned !== null ? "refresh_consumed" : "empty_queue" };
     });
   }
 
@@ -199,8 +215,10 @@ export class SqliteSchedulerRepository implements SchedulerRepository {
     return this.db.transaction(() => {
       this.assertWorker(token);
       const run = this.run(id);
+      this.timed.completeInside(run);
       const planned = run.status === "failed" && this.db.connection.prepare("SELECT child_run_id FROM continuation_plans WHERE parent_run_id=?").get(id);
-      if (run.status !== "succeeded" && run.status !== "waiting_quota" && !planned) this.pause(`run_${run.status}`);
+      const missed = run.timed && run.error?.startsWith("TIMED_DEADLINE:") && !this.db.connection.prepare("SELECT sequence FROM execution_events WHERE run_id=? AND type='submission_started'").get(id);
+      if (run.status !== "succeeded" && run.status !== "waiting_quota" && !planned && !missed) this.pause(`run_${run.status}`);
       return run;
     });
   }
@@ -235,11 +253,11 @@ export function checkSchedulerStorage(db: Database): void {
     if (row.task_id !== run.taskId || row.task_revision !== run.taskRevision) invalid();
   }
   const count = (table: string) => Number(db.connection.prepare(`SELECT count(*) AS n FROM ${table}`).get()!.n);
-  const membershipCount = count("scheduler_queue") + count("continuation_queue");
+  const membershipCount = count("scheduler_queue") + count("continuation_queue") + count("timed_queue");
   if (count("queue_positions") !== membershipCount || count("dispatch_queue") + count("queue_removals") !== membershipCount) invalid();
   for (const row of db.connection.prepare("SELECT * FROM queue_removals").all()) {
     if (!validDate(row.removed_at) || !["queued", "waiting_quota", "needs_attention", "succeeded", "failed", "cancelled"].includes(String(row.previous_status))
-      || !db.connection.prepare("SELECT run_id FROM scheduler_queue WHERE run_id=? UNION ALL SELECT run_id FROM continuation_queue WHERE run_id=?").get(row.run_id!, row.run_id!)) invalid();
+      || !db.connection.prepare("SELECT run_id FROM scheduler_queue WHERE run_id=? UNION ALL SELECT run_id FROM continuation_queue WHERE run_id=? UNION ALL SELECT run_id FROM timed_queue WHERE run_id=?").get(row.run_id!, row.run_id!, row.run_id!)) invalid();
   }
   for (const row of db.connection.prepare("SELECT * FROM continuation_plans").all()) {
     const evidence = readInterruption(row.evidence_json), child = db.connection.prepare("SELECT data_json FROM runs WHERE id=?").get(row.child_run_id!);

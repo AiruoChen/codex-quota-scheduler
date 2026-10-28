@@ -24,7 +24,7 @@ function monitor(): MonitorState {
 function state(): ManagementState {
   const saved = monitor();
   return { provider: "codex", closing: false, now: new Date(epoch).toISOString(), monitor: saved, quota: quotaDisplay(saved, policy, new Date(epoch)), currentRun: null,
-    events: [], jobs: [], loop: "monitor", dispatch: null, scheduler: { paused: true, reason: null, worker: null, attention: [], queue: [] }, recovery: { checkedAt: new Date(epoch).toISOString(), issues: [], owners: [] } };
+    events: [], jobs: [], loop: "monitor", dispatch: null, timed: { protections: [], enabled: 0 }, scheduler: { paused: true, reason: null, worker: null, attention: [], queue: [] }, recovery: { checkedAt: new Date(epoch).toISOString(), issues: [], owners: [] } };
 }
 
 test("GUI 展示所有服务端窗口及任意时长，0% 保留为耗尽而非未知，账户默认脱敏", () => {
@@ -71,8 +71,8 @@ test("GUI 计时以服务端时间为锚，边界到达只请求一次查询，�
   await store.refresh(); assert.equal(store.tick(), false);
 });
 
-test("未知和原型属性 hash 回到概览，六个页面路由均有明确入口", () => {
-  for (const id of ["overview", "tasks", "queue", "runs", "recovery", "settings"]) assert.equal(route("#" + id), id);
+test("未知和原型属性 hash 回到概览，七个页面路由均有明确入口", () => {
+  for (const id of ["overview", "tasks", "schedules", "queue", "runs", "recovery", "settings"]) assert.equal(route("#" + id), id);
   for (const hash of ["", "#toString", "#__proto__", "#missing"]) assert.equal(route(hash), "overview");
 });
 

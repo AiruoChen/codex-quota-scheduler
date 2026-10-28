@@ -4,6 +4,7 @@ import type { QuotaAvailability } from "./quota-policy.js";
 
 export interface Clock {
   now(): Date;
+  monotonic?(): number;
 }
 
 export const systemClock: Clock = { now: () => new Date() };

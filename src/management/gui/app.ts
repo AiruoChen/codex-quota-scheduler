@@ -10,6 +10,7 @@ import { recoveryView } from "./recovery.js";
 import { tasksView } from "./tasks.js";
 import { runsView } from "./runs.js";
 import { settingsView } from "./settings.js";
+import { schedulesView } from "./schedules.js";
 
 let bootstrapped = false;
 let view = route();
@@ -26,7 +27,9 @@ const context: UiContext = {
   openRun: (id) => runs.open(id),
   async confirmAction(action, id, text) {
     if (!confirm(text)) return;
-    const result = await context.act(action, { id, confirm: true }, action === "cancel" ? "已请求取消，终态以运行记录为准。" : "操作已提交，结果见运行记录。") as { runId?: string };
+    const protectedTime = ["run", "run-start"].includes(action) && !!context.state()?.timed.protections.length;
+    if (protectedTime && !confirm("当前处于额度保护时段。确认允许本次手动执行消耗预留额度？仅对本次运行生效。")) return;
+    const result = await context.act(action, { id, confirm: true, ...(protectedTime ? { allowProtected: true } : {}) }, action === "cancel" ? "已请求取消，终态以运行记录为准。" : "操作已提交，结果见运行记录。") as { runId?: string };
     if (["run", "run-start"].includes(action) && result.runId) await runs.open(result.runId);
     if (runs.isOpen()) await runs.render();
   },
@@ -35,7 +38,7 @@ const store = new StateStore(async () => {
   if (!bootstrapped) { await bootstrap(); bootstrapped = true; }
   return api<ManagementState>("/api/state");
 }, () => {
-  renderShell(store.value); renderOverview(store.value, context); queue.render(); recovery.render(); tickOverview(store.now());
+  renderShell(store.value); renderOverview(store.value, context); queue.render(); recovery.render(); schedules.render(); tickOverview(store.now());
   const jobs = store.value.data?.jobs ?? [];
   for (const job of jobs) {
     if (seenJobs.get(job.id) === "running" && job.state !== "running" && !["monitor", "scheduler"].includes(job.kind)) notice(job.state === "failed" ? `后台操作未完成：${job.code}。请检查运行记录。` : "后台操作已结束，请查看运行记录。", job.state === "failed");
@@ -45,11 +48,13 @@ const store = new StateStore(async () => {
 const tasks = tasksView(context), runs = runsView(context), settings = settingsView(context);
 const queue = queueView(context);
 const recovery = recoveryView(context);
+const schedules = schedulesView(context);
 async function loadView() {
   if (!store.value.connected) return;
   if (view === "tasks" && !tasks.editing()) await tasks.load();
   if (view === "runs") await runs.load();
   if (view === "recovery") await recovery.load();
+  if (view === "schedules") await schedules.load();
   if (runs.isOpen()) await runs.render();
 }
 async function refresh() { await store.refresh(); await loadView(); }

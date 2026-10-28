@@ -16,7 +16,7 @@ import { claimInstance } from "../src/runtime/instance.js";
 const hash = (value: Buffer) => createHash("sha256").update(value).digest("hex");
 function legacySix(db: DatabaseSync) {
   // Build a genuine old schema, rather than relabelling a database containing newer tables.
-  db.exec("DROP VIEW dispatch_queue; DROP TABLE queue_removals; DROP TABLE continuation_queue; DROP TABLE continuation_plans; DROP TABLE continuation_chains; DROP TABLE queue_positions; DROP TABLE task_create_requests; PRAGMA user_version=6;DELETE FROM metadata WHERE key='database_identity'");
+  db.exec("DROP VIEW dispatch_queue; DROP TABLE timed_queue; DROP TABLE timed_occurrences; DROP TABLE timed_plans; DROP TABLE queue_order; DROP TABLE queue_removals; DROP TABLE continuation_queue; DROP TABLE continuation_plans; DROP TABLE continuation_chains; DROP TABLE queue_positions; DROP TABLE task_create_requests; PRAGMA user_version=6;DELETE FROM metadata WHERE key='database_identity'");
 }
 async function setup() {
   const root = await mkdtemp(join(tmpdir(), "migration 中文 &-"));

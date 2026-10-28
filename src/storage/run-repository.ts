@@ -26,6 +26,10 @@ export function readRun(value: unknown): TaskRun {
       || !Number.isFinite(Date.parse(run.createdAt))
       || ![run.startedAt, run.completedAt].every((time) => time === null || typeof time === "string" && Number.isFinite(Date.parse(time)))) throw new Error("Invalid run");
     definitionOf(run.taskSnapshot);
+    if (run.timed && (!/^[a-f0-9-]{36}$/.test(run.timed.planId) || !/^[a-f0-9-]{36}$/.test(run.timed.occurrenceId)
+      || ![run.timed.dueAt, run.timed.deadlineAt].every(time => typeof time === "string" && Number.isFinite(Date.parse(time)))
+      || Date.parse(run.timed.deadlineAt) < Date.parse(run.timed.dueAt) || typeof run.timed.continuation !== "boolean"
+      || run.timed.continuation !== !!run.continuation)) throw new Error("Invalid timed origin");
     if (run.continuation && (!Number.isSafeInteger(run.continuation.attempt) || run.continuation.attempt < 1 || run.continuation.attempt > 20
       || ![run.continuation.rootRunId, run.continuation.parentRunId, run.continuation.parentTurnId].every(value => typeof value === "string" && value.length > 0)
       || ![run.continuation.connectionKey, run.continuation.accountScope].every(value => typeof value === "string" && /^[a-f0-9]{64}$/.test(value))

@@ -11,9 +11,9 @@ const help = `用法：npm start -- 命令 [--config 文件路径]
   task list | show ID | add JSON文件 | import JSON数组文件
   task update JSON文件 --revision N
   task enable ID --revision N | disable ID --revision N | delete ID --revision N
-  task history ID | run ID
+  task history ID | run ID [--allow-protected]
   runs prepare 任务ID | list 任务ID | show 运行ID
-  runs start 运行ID | cancel 运行ID | events 运行ID | recover 运行ID
+  runs start 运行ID [--allow-protected] | cancel 运行ID | events 运行ID | recover 运行ID
   monitor sample | watch [--samples 次数] | status | events
   scheduler enqueue 任务ID | remove 运行ID | acknowledge 运行ID
   scheduler start [--samples 次数] | status | queue | pause | resume | recover
@@ -43,12 +43,15 @@ async function main(): Promise<unknown> {
   const revisionText = takeOption(args, "--revision");
   const samplesText = takeOption(args, "--samples");
   const portText = takeOption(args, "--port");
+  const allowProtected = args.includes("--allow-protected");
+  if (allowProtected) { const index = args.indexOf("--allow-protected"); args.splice(index, 1); if (args.includes("--allow-protected")) invalid(); }
   const command = args.shift() ?? "help";
   if (["help", "--help", "-h"].includes(command)) { console.log(help); return; }
   const configPath = explicitConfig ?? (["ui", "service"].includes(command) ? "config/local.json"
     : command === "demo" || !existsSync("config/local.json") ? "config/example.json" : "config/local.json");
   const action = args[0];
   const value = args[1];
+  if (allowProtected && !(command === "task" && action === "run" || command === "runs" && action === "start")) invalid();
   const port = portText === undefined ? 8765 : Number(portText);
   if (portText !== undefined && !(command === "ui" || command === "service" && action === "start")
     || !Number.isSafeInteger(port) || port < 0 || port > 65535) invalid();
@@ -110,7 +113,7 @@ async function main(): Promise<unknown> {
     try {
       const execution = await app.execution();
       const started = (runId: string) => console.error(JSON.stringify({ event: "run_started", runId }));
-      const run = create ? await execution.runTask(id, controller.signal, started) : await execution.start(id, controller.signal, started);
+      const run = create ? await execution.runTask(id, controller.signal, started, undefined, allowProtected) : await execution.start(id, controller.signal, started, allowProtected);
       if (!["succeeded", "cancelled"].includes(run.status)) process.exitCode = 1;
       return run;
     } finally { process.removeListener("SIGINT", stop); process.removeListener("SIGTERM", stop); }

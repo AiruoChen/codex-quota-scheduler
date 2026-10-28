@@ -28,7 +28,7 @@ export interface MonitorEvent {
   data: Record<string, string | number | null>;
 }
 
-export interface MonitorUpdate { state: MonitorState; events: MonitorEvent[] }
+export interface MonitorUpdate { state: MonitorState; events: MonitorEvent[]; discontinuityAt?: string }
 export type MonitorObservation = { snapshot: QuotaSnapshot } | { errorCode: string };
 export interface MonitorRepository {
   record(observation: MonitorObservation): MonitorUpdate;

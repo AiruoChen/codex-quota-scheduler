@@ -9,6 +9,7 @@ import { isRecord } from "../shared/validation.js";
 import { readMonitorEvent, readMonitorState } from "./monitor-repository.js";
 import { checkSchedulerStorage } from "./scheduler-repository.js";
 import { checkRecoveryStorage } from "./recovery-repository.js";
+import { checkTimedStorage } from "./timed-check.js";
 
 export interface TaskImport { task: TaskDefinition; prompt: string }
 
@@ -53,6 +54,7 @@ export class SqliteStore {
     for (const row of this.database.connection.prepare("SELECT * FROM quota_monitor_events").all()) readMonitorEvent(row);
     checkSchedulerStorage(this.database);
     checkRecoveryStorage(this.database);
+    checkTimedStorage(this.database);
     return { ok: true, tasks: tasks.length, runs: runs.length, versions };
   }
 

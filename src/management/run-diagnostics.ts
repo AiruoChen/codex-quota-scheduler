@@ -18,7 +18,7 @@ export function runDiagnostics(run: TaskRun, events: ExecutionEvent[], now: Date
     sequence: e.sequence, event: e.type, status: typeof e.data.status === "string" && states.includes(e.data.status) ? e.data.status : null,
   }));
   const canReconcile = run.status === "needs_attention" && !active && hasTurn && !!run.threadId && originPresent;
-  const knownCodes = ["CODEX_AUTHORIZATION_MISMATCH", "CODEX_AUTHORIZATION_CHANGED", "CODEX_AUTHORIZATION_UNSUPPORTED", "CODEX_RPC_ERROR", "CODEX_NETWORK_ERROR", "CODEX_NOT_FOUND", "CODEX_START_FAILED", "CODEX_INCOMPATIBLE", "CODEX_TIMEOUT", "CODEX_AUTH_REQUIRED", "CODEX_ENVIRONMENT_UNVERIFIED", "EXECUTION_FAILED", "EXECUTION_TIMEOUT", "STORAGE_WRITE_FAILED", "THREAD_BUSY", "THREAD_PROJECT_MISMATCH", "ACCOUNT_CHANGED"];
+  const knownCodes = ["TIMED_NOT_DUE", "TIMED_DEADLINE", "TIMED_PLAN_CHANGED", "TIMED_PROTECTION_ACTIVE", "CODEX_AUTHORIZATION_MISMATCH", "CODEX_AUTHORIZATION_CHANGED", "CODEX_AUTHORIZATION_UNSUPPORTED", "CODEX_RPC_ERROR", "CODEX_NETWORK_ERROR", "CODEX_NOT_FOUND", "CODEX_START_FAILED", "CODEX_INCOMPATIBLE", "CODEX_TIMEOUT", "CODEX_AUTH_REQUIRED", "CODEX_ENVIRONMENT_UNVERIFIED", "EXECUTION_FAILED", "EXECUTION_TIMEOUT", "STORAGE_WRITE_FAILED", "THREAD_BUSY", "THREAD_PROJECT_MISMATCH", "ACCOUNT_CHANGED"];
   const code = run.error?.split(":", 1)[0] ?? "";
   const exceptions = events.filter(e => e.type === "execution_exception").map(e => ({ code: typeof e.data.code === "string" && knownCodes.includes(e.data.code) ? e.data.code : "UNKNOWN", systemCode: systemErrorCode({ code: e.data.systemCode }) }));
   return { format: 2, generatedAt: now.toISOString(),

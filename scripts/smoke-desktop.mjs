@@ -137,6 +137,10 @@ try {
   assert.equal(await readInstance(configPath), null);
   assert.ok((await readFile(join(profile, "data/state.sqlite"))).length > 0);
   if (packaged) {
+    const appRoot = join(executable, "../resources/app");
+    const manifest = JSON.parse(await readFile(join(appRoot, "package.json"), "utf8"));
+    const manual = await readFile(join(appRoot, "docs/USER-MANUAL.html"), "utf8");
+    assert.ok(manual.includes(`<span class="edition">${manifest.version} `), "Packaged offline manual matches the client version");
     const appFiles = await readdir(join(executable, "../resources/app"), { recursive: true });
     assert.ok(!appFiles.some((file) => /(^|[\\/])(node_modules|tests|\.local|\.runtime|\.git)([\\/]|$)|local\.json|\.sqlite|\.log$/.test(file)));
   }

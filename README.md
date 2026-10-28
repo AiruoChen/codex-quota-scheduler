@@ -1,9 +1,62 @@
 # Codex Quota Scheduler 0.4.0
 
+[查看目录](#contents) · [独立简明版](docs/QUICK-START.md) · [完整使用手册](docs/USER-MANUAL.md)
+
+<a id="quick-start"></a>
+## Codex 任务助手：用户使用手册（简明版）
+
+适用：Windows 64 位客户端。按下面顺序操作即可。
+
+<a id="quick-start-1"></a>
+### 1. 下载并打开
+
+1. 打开[项目下载页](https://github.com/AiruoChen/codex-quota-scheduler/releases)，在 **Assets（附件）** 中下载 Windows 客户端。
+2. 下载的是安装包（`setup.exe`）：双击安装，再从桌面打开。
+3. 下载的是便携 ZIP：右键选择“全部解压”，打开解压后的文件夹，双击 **`CodexQuotaScheduler.exe`**。保留整个文件夹。
+
+**下载页没有附件时，请向项目提供者索取客户端包。** `Code → Download ZIP` 是源码，不能直接双击运行。
+
+<a id="quick-start-2"></a>
+### 2. 连接自己的 Codex 账户（首次使用）
+
+1. 按[官方说明](https://learn.chatgpt.com/docs/codex/cli)安装 **Codex CLI**；已经安装的跳过此步。
+2. 按 **Win + R**，输入 `powershell` 并回车。在打开的窗口输入 `codex login`，回车后按浏览器提示登录自己的 ChatGPT 账户。[官方登录说明](https://learn.chatgpt.com/docs/auth)
+3. 打开本助手的“设置与帮助”：配置项选择 **`provider`**，值填写 **`codex`**，点击“保存配置”。
+4. 点击顶部“后台服务 → 重启自有后台…”，按提示确认。
+5. 回到“运行概览”，点击“查询额度”。看到自己的账户和真实额度后继续。
+
+如果仍显示“模拟模式”，请先检查第 3、4 步；模拟模式不能执行真实任务。
+
+<a id="contents"></a>
+## 目录
+
+- [简明上手（下载、打开与连接账户）](#quick-start)
+  - [1. 下载并打开](#quick-start-1)
+  - [2. 连接自己的 Codex 账户（首次使用）](#quick-start-2)
+- [项目说明](#overview)
+- [源码快速开始](#source-quick-start)
+- [本地管理界面](#desktop)
+- [验收与发布](#acceptance)
+- [初始化本地管理数据](#initialize)
+- [手动执行任务](#manual-execution)
+- [持续额度监控](#monitoring)
+- [自动调度](#scheduling)
+- [异常与重启恢复](#recovery)
+- [命令](#commands)
+- [真实额度读取](#quota)
+- [配置与任务](#configuration)
+- [模块](#modules)
+- [开发顺序](#roadmap)
+- [接口依据](#protocol)
+- [仓库](#repository)
+
+<a id="overview"></a>
+## 项目说明
+
 本地运行的 Codex 额度监控与任务调度项目，面向 Windows，采用 TypeScript + Node.js。
 目标：提前维护任务，在账户额度恢复且其他限制允许时，自动提交给 Codex。
 
-**普通用户请先阅读：[零基础用户使用手册](docs/USER-MANUAL.md)。** 提供从安装到任务、自动调度、异常处理、备份升级的逐步说明，以及 [离线 HTML 版](docs/USER-MANUAL.html)。当前代码版本统一为 **0.4.0**，发布状态为 Windows x64 测试客户端；安装包是否可下载，以 [Releases 附件](https://github.com/AiruoChen/codex-quota-scheduler/releases)为准。
+需要排查问题时，再看[完整使用手册](docs/USER-MANUAL.md)或[离线 HTML 版](docs/USER-MANUAL.html)。当前代码版本统一为 **0.4.0**，发布状态为 Windows x64 测试客户端；安装包是否可下载，以 [Releases 附件](https://github.com/AiruoChen/codex-quota-scheduler/releases)为准。
 
 **当前已完成真实额度读取、持久化管理、执行、持续监控、自动调度、异常/重启恢复，以及本地管理界面与运行包装。默认演示使用模拟数据和内存存储；自动队列初始暂停，须显式入队和启动。**
 
@@ -30,6 +83,7 @@
 
 继续已有会话可先选项目，再按名称选择会话。针对桌面端“项目已迁移、会话归属尚未迁移”的情况，新增只读兼容层：从当前 Codex 数据目录读取明确的侧栏关联及新旧项目 ID 映射，并与当前账户接口返回的项目和会话交叉核对。下拉项标注“桌面项目关联”；不按目录猜测，不改写 Codex 状态或迁移标记。格式或来源不受支持时说明原因，仍可显式查看全部会话。兼容层使用经本机验证的桌面状态 v1 格式，属于本地兼容能力，非稳定公开 API；显示关联不继承文件权限。
 
+<a id="source-quick-start"></a>
 ## 快速开始
 
 续接权限核验提供固定检查项与详细脱敏请求时间线。`environments: null` 或结构已知的非空环境选择，只有从准确本机 CLI 生成的协议确认可显式禁用环境访问时才兼容，提交中固定发送空环境数组，目录、网络和审批仍逐项核验。队列支持显式移除待核对记录并保留历史；缺少准确回合时禁用应用远端结果。见[队列移除与详细诊断](docs/QUEUE-AND-DIAGNOSTICS.md)及[续接授权排查](docs/RESUME-AUTHORIZATION.md)。
@@ -56,6 +110,7 @@ Windows PowerShell 若限制执行 npm.ps1，请使用上面的 npm.cmd；其他
 `demo` 不修改个人数据库。Node.js 22.12 的 SQLite 实验参数已包含在 npm 启动和测试脚本中，
 该版本可能输出 SQLite ExperimentalWarning，不影响 JSON 结果。
 
+<a id="desktop"></a>
 ## 本地管理界面
 
 已提供最小 Windows 桌面客户端：开发运行 `npm.cmd run desktop`，便携打包 `npm.cmd run package:desktop`。
@@ -72,6 +127,7 @@ Windows PowerShell 若限制执行 npm.ps1，请使用上面的 npm.cmd；其他
 已提供 Windows 当前用户安装包：`npm.cmd run package:installer`。数据管理支持一致性备份、旧数据导入为新副本、配置切换和升级准备；卸载保留用户数据。见 [安装与数据迁移](docs/DESKTOP-INSTALL-MIGRATION.md)。
 客户端的设置页提供离线使用说明和脱敏诊断 JSON 导出；后台无法启动时，状态页仍可查看帮助。
 
+<a id="acceptance"></a>
 ## 验收与发布
 
 Windows x64 上可运行 `npm.cmd run acceptance -- --output-name candidate-001 --soak-seconds 60`，统一执行检查、测试、演示、便携与安装器打包、桌面/生命周期/安装迁移验收、隐私检查和协议替身稳定性烟测。干净源码提交通过后，输出 `.release/candidate-001/bundle/`，其中包含安装包、SHA256、版本说明及脱敏验收报告。`npm.cmd run verify:release -- --directory .release/candidate-001/bundle --channel candidate` 会重新核对文件和门禁；已用过的输出名不可覆盖。
@@ -102,6 +158,7 @@ npm.cmd run package
 复制整个目录即可运行，目标机器需要 Node.js 22.12+，无需 `npm install`。
 运行方式、界面操作及边界见 [管理界面与运行包装](docs/MANAGEMENT.md)。
 
+<a id="initialize"></a>
 ## 初始化本地管理数据
 
 ```powershell
@@ -115,6 +172,7 @@ npm.cmd start -- task list
 首次任务访问会从 `tasksFile` 导入任务并保存提示词快照，之后以数据库为准；编辑源 JSON 不会自动覆盖已有任务。
 任务编辑、版本检查、历史、备份和恢复见 [持久化管理说明](docs/PERSISTENCE.md)。
 
+<a id="manual-execution"></a>
 ## 手动执行任务
 
 已有个人配置和任务后，将 provider 设置为 codex，再执行指定任务：
@@ -133,6 +191,7 @@ npm.cmd start -- runs list review-project
 
 RPC 拒绝现提供基于明确证据的固定类别及诊断编号，运行审计和脱敏诊断导出均不保留原始错误或私人正文。`diagnose:resume` 可对准确已记录运行进行只读来源、账户、目录与历史接口检查；读取通过不代表恢复或权限已经验证，不重试原任务。见 [RPC 诊断与续接兼容检查](docs/CODEX-RPC-DIAGNOSTICS.md)。
 
+<a id="monitoring"></a>
 ## 持续额度监控
 
 ```powershell
@@ -146,6 +205,7 @@ npm.cmd start -- monitor watch
 重复快照不会重复生成刷新事件，重启后继续使用本地检查点；五小时窗口刷新也不能绕过周额度或保留阈值。
 这些命令只监控，不提交任务。识别规则和错误处理见 [额度监控说明](docs/MONITORING.md)。
 
+<a id="scheduling"></a>
 ## 自动调度
 
 在已有个人任务和真实登录的基础上：
@@ -163,6 +223,7 @@ npm.cmd start -- scheduler start
 可用 `config set scheduler.trigger refresh` 切换为确认新刷新后触发一项任务，修改配置后重启进程生效。
 审批、失败或结果不明会暂停队列；核对、恢复和触发模式详见 [自动调度说明](docs/SCHEDULING.md)。
 
+<a id="recovery"></a>
 ## 异常与重启恢复
 
 ```powershell
@@ -177,6 +238,7 @@ repair 只清理确认退出的进程权，并把结果不明记录转为待核�
 inspect 只读原会话/回合；reconcile 在账户、目录和准确回合匹配时恢复已确认结果，队列保持暂停。
 缺少来源或回合 ID 的旧记录继续人工核对，不猜测对应任务。使用流程和恢复日志见 [恢复说明](docs/RECOVERY.md)。
 
+<a id="commands"></a>
 ## 命令
 
 先运行 `npm.cmd run build`，然后使用：
@@ -198,6 +260,7 @@ npm.cmd start -- status --config config/local.json
 `demo` 默认使用示例配置并强制使用 mock 和内存库，确保演示可重复。
 `provider: "mock"` 使用模拟数据；`provider: "codex"` 通过本机 Codex App Server 查询真实账户。
 
+<a id="quota"></a>
 ## 真实额度读取
 
 先确保安装了 Codex CLI，并使用 ChatGPT 订阅账户完成 `codex login`，然后执行：
@@ -214,6 +277,7 @@ npm.cmd start -- status --config config/codex.example.json
 复用 Codex 自己维护的登录凭据；本项目不读取或保存访问令牌，也不会启动任务或消费重置奖励。
 详细连接配置、错误代码和实测记录见 [真实额度读取说明](docs/CODEX-QUOTA.md)。
 
+<a id="configuration"></a>
 ## 配置与任务
 
 | 配置 | 作用 |
@@ -239,6 +303,7 @@ npm.cmd start -- status --config config/codex.example.json
 `execution` 可配置 read-only / workspace-write、timeoutMs 和 effort，缺省为只读、15 分钟超时。
 个人任务与输出请放入 `.local/` 和 `.runtime/`，这两个目录均不提交。
 
+<a id="modules"></a>
 ## 模块
 
 ```text
@@ -272,6 +337,7 @@ docs/              需求、架构和分阶段开发路线
 
 2026-10-26 的 [完整需求审计与修复跟进](docs/AUDIT-2026-10-26.md) 补齐了执行和版本兼容边界：手动与自动执行共用持久化额度窗口历史，缺失窗口或未知账户不能提交；会话准备后及实际发送前重验有效期，过期最多完整重查一次，仍未知则等待。导入配置在首次启动前也必须通过客户端版本标记检查。标准测试对每项用例设置 60 秒超时；桌面“安装与数据迁移”提供固定用户数据目录的打开入口。
 
+<a id="roadmap"></a>
 ## 开发顺序
 
 托盘、通知、安装包与数据迁移、设置帮助和候选版验收发布模块已实现；正式签名、独立机器和真实账户验收仍须按 [开发路线](docs/ROADMAP.md) 补足证据。
@@ -281,6 +347,7 @@ docs/              需求、架构和分阶段开发路线
 异常检测、显式本地修复与准确回合结果核对已接通；证据不足的记录继续保留 needs_attention。
 恢复不会自动重发或恢复派发；后台服务和管理界面已实现，服务重启后队列保持暂停。
 
+<a id="protocol"></a>
 ## 接口依据
 
 官方 [App Server 文档](https://learn.chatgpt.com/docs/app-server) 提供
@@ -289,6 +356,7 @@ docs/              需求、架构和分阶段开发路线
 
 文档核对日期：2026-10-21。真实接入时需再次核对本机 Codex 版本与对应协议。
 
+<a id="repository"></a>
 ## 仓库
 
 GitHub：<https://github.com/AiruoChen/codex-quota-scheduler>

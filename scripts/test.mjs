@@ -7,6 +7,8 @@ const files = readdirSync("tests", { recursive: true })
   .filter((file) => file.endsWith(".test.ts") || file.endsWith(".test.mjs"))
   .map((file) => file.endsWith(".test.ts") ? join("dist/tests", file.replace(/\.ts$/, ".js")) : join("tests", file));
 if (files.length === 0) throw new Error("No compiled tests found. Run npm run build first.");
-const result = spawnSync(process.execPath, ["--experimental-sqlite", "--test", "--test-timeout=60000", ...files], { stdio: "inherit" });
+// Each protocol suite launches child processes and uses durable SQLite writes.
+// Bound concurrent files so shared Windows runners do not starve a suite's deadline.
+const result = spawnSync(process.execPath, ["--experimental-sqlite", "--test", "--test-concurrency=2", "--test-timeout=60000", ...files], { stdio: "inherit" });
 if (result.error) throw result.error;
 process.exitCode = result.status ?? 1;

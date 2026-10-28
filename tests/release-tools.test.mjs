@@ -10,7 +10,7 @@ import { digest, fileDigest, generatedDirectory, inspectInstaller, localPath } f
 import { root } from "../scripts/lib/runtime-files.mjs";
 
 const commit = "a".repeat(40);
-const version = "0.3.0";
+const version = JSON.parse(await readFile(join(root, "package.json"), "utf8")).version;
 const filename = `CodexQuotaScheduler-${version}-win-x64-setup.exe`;
 
 async function fixture(t) {

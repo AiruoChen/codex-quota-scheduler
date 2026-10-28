@@ -1,6 +1,6 @@
 {
   "name": "codex-quota-scheduler",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "description": "Modular local Codex quota monitor and task scheduler",
   "type": "module",

@@ -1,0 +1,45 @@
+# 0.4.0 代码审计与版本确定
+
+日期：2026-10-28。审计基线：已合并 PR #16 的 main 提交 `83a0799fccabff2b84e1c66b6c89563e3925657b`。本次将当前已交付功能编号统一为 0.4.0，保留原始需求中的能力限制与待验事项。
+
+## 结论及发现
+
+关键路径静态核对及隔离回归范围内，未新增确认可复现的 P1 执行边界缺陷。本次确认并修正以下版本和维护问题；此结论不覆盖未执行的真实任务、所有 CLI 版本或全部人工验收场景。
+
+| 发现 | 影响 | 修正 |
+| --- | --- | --- |
+| 版本仍为 0.3.0，README 与手册也称当前程序为 0.3.0 | 无法准确识别已交付的任务体验、续接、队列和诊断增量 | package.json 与锁文件统一为 0.4.0，同步当前说明；桌面及安装器继续读取同一版本清单 |
+| 实施文档仍称数据库模式为 9，代码已迁移至 10 | 用户可能误判队列移除及导入兼容范围 | 明确模式 10、本次不新增迁移及旧客户端兼容边界 |
+| 检查未同时校验版本清单和锁文件，发布工具测试固定使用旧版本 | 版本遗漏或本版版本说明缺失可能直到组装候选包才发现 | 在 check 增加一致性及版本说明检查，发布工具回归使用当前清单版本 |
+| 离线手册生成器拒绝含版本小数点的文档链接，版本标题格式也过于固定 | 链接 0.4.0 版本说明或简化版本标题会导致 HTML 同步失败 | 兼容版本文件名和两种标题；隔离回归继续拒绝路径穿越、绝对路径、编码目录和脚本链接，并验证正文 HTML 转义 |
+
+历史版本说明、降级保护测试中的 0.3.0 样本继续保留，避免把旧版本兼容测试改成只覆盖新版。
+
+## 核对范围
+
+| 范围 | 代码与隔离回归依据 | 当前判断 |
+| --- | --- | --- |
+| 额度读取及发送前校验 | MonitoredExecutionQuota、recognize、quota-policy；quota-boundary、execution-preflight、auto-scheduler 测试 | 保留已知窗口，未知／缺失／过期不放行；会话准备后及发送边界重验 |
+| 执行与互斥 | ManualExecutionService、ExecutionRepository、SchedulerService；execution、scheduler、recovery 测试 | 使用不可变快照、账户及执行权；结果不明保留待核对，不自动重发 |
+| 额度中断续接 | continuation 领域规则及仓储；continuation 测试 | 默认关闭；准确失败、耗尽及重置证据、原始快照、上限、停止和去重保留 |
+| 明确授权与协议 | resume-authorization、turn-environment-protocol、turn-runner；resume-authorization、authorization-diagnostics 测试 | 核对准确 CLI 协议后清除本回合环境选择；目录、写入、网络及审批仍核验，未知继续阻断 |
+| 队列移除与恢复 | scheduler-repository、recovery-repository；queue-removal、recovery、management 测试 | 移除保留历史；待核对须确认并暂停；运行中／持锁不能移除；缺少准确回合不能应用结果 |
+| 存储与升级 | database、profile-snapshot、data-transfer、ConfigManager；persistence、data-transfer、config-manage 测试 | 同步 SQLite 事务、revision、原子配置、保留数据迁移和备份；新版本配置拒绝旧客户端降级 |
+| HTTP 与 Electron | management-server、desktop/security、IPC 适配器；management、desktop、生命周期及 GUI 验收 | 回环地址、会话／CSRF、固定 IPC、隔离渲染器、禁止任意导航及后台安全停止继续保留 |
+| 诊断隐私 | execution-trace、run-diagnostics、rpc-errors；execution-trace、rpc-diagnostics 测试 | 固定白名单、运行内代号、导出重验、数量上限；不记录原始错误、凭据、指令或完整私人路径 |
+| 模块与规范 | TypeScript 严格模式及 scripts/check.mjs | 领域／调度依赖约束和 GUI 导入边界有自动检查；新增版本一致性检查 |
+| 发布和供应链 | 锁文件、release-bundle、验收／发布工作流；release、release-tools 测试 | 构建与报告绑定版本／提交／SHA256；签名和稳定版人工门禁继续保留 |
+
+`npm audit --json` 于本次审计查询锁定依赖，返回 0 项已知漏洞。它只反映当时 npm 公告库中的结果，不覆盖全部原生组件或未公开问题；未据此无条件升级依赖。
+
+## 需求完成边界
+
+U01 动态模型、U02 自动任务 ID、U03 项目／会话选择、U06 时间排序及 U07 独立保留线已有实现和隔离覆盖。U05 的证据与持久化续接链有协议替身覆盖，真实发送仍待验。U04 已提供只读目录展示与本次明确授权，完整原生权限继承、零文件夹官方项目、跨设备／远程环境继续列为受限能力。
+
+原始 A01–A39 清单继续作为验收依据，未将所有场景或真实环境标为已验。0.4.0 的范围是现有已交付能力及修复；完整稳定版仍需签名、真实账户的明确测试、独立 Windows、原生通知／缩放／故障走查及连续 24 小时实测。
+
+## 验证记录
+
+本机完整隔离验收通过：`npm run check`、358 项测试（0 失败／取消／跳过）、`npm run demo`、Markdown／HTML 手册同步、0.4.0 打包 GUI、8 个生命周期场景、安装迁移及 60 秒协议替身稳定性。便携包清单、Windows 程序属性及安装器版本均为 0.4.0。候选包最终证据以 PR 的 Windows/Linux 检查、桌面完整验收及同提交的干净源码报告为准；各阶段历史测试数量不作为本版通过证据。
+
+所有执行验证使用隔离数据库、模拟额度或协议替身。没有恢复、重发或取消用户原会话任务，没有修改真实队列、Codex 授权或文件权限。旧记录未保存的响应不能补回；缺少真实恢复证据的事项保持未确认。

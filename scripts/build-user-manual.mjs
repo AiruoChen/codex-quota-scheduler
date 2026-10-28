@@ -8,7 +8,7 @@ const source = new URL("../docs/USER-MANUAL.md", import.meta.url);
 const target = new URL("../docs/USER-MANUAL.html", import.meta.url);
 const markdown = (await readFile(source, "utf8")).replace(/\r\n/g, "\n");
 const lines = markdown.trimEnd().split("\n");
-const edition = markdown.match(/^适用版本：完整的 \*\*(.+?)\*\*/m)?.[1];
+const edition = markdown.match(/^适用版本：(?:完整的 )?\*\*(.+?)\*\*/m)?.[1];
 const escape = (text) => text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 const references = [];
 function inline(value) {
@@ -19,7 +19,7 @@ function inline(value) {
     if (match[1] !== undefined) text += `<code>${escape(match[1])}</code>`;
     else if (match[2] !== undefined) {
       const href = match[3];
-      if (!/^(?:https:\/\/[^\s]+|#[a-z0-9-]+|[a-z0-9-]+\.(?:html|md))$/i.test(href)) throw new Error("MANUAL_LINK_UNSUPPORTED");
+      if (!/^(?:https:\/\/[^\s]+|#[a-z0-9-]+|[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:html|md))$/i.test(href)) throw new Error("MANUAL_LINK_UNSUPPORTED");
       references.push(href);
       text += `<a href="${escape(href)}">${inline(match[2])}</a>`;
     } else text += `<strong>${inline(match[4])}</strong>`;

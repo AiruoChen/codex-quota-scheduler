@@ -3,7 +3,7 @@ import type { Clock } from "../domain/ports.js";
 import type { MonitorState } from "../domain/monitor.js";
 import type { TimedPlan, TimedPlanInput, TimedOccurrence } from "../domain/timed-plan.js";
 import { localParts, parseTimedPlan, skippedLocalDates, slotsNear, TimedPlanError } from "../domain/timed-plan.js";
-import { hasQuotaIdentity } from "../domain/quota-policy.js";
+import { evaluateQuota, hasQuotaIdentity } from "../domain/quota-policy.js";
 import type { MonitorOptions } from "../monitor/recognize.js";
 import { digest } from "../monitor/recognize.js";
 import { AppError } from "../shared/errors.js";
@@ -25,7 +25,8 @@ export class TimedPlanRepository {
   fresh(state = this.state()): MonitorState | null {
     const age = this.clock.now().getTime() - Date.parse(state?.snapshot?.fetchedAt ?? "");
     return state && !state.errorCode && state.snapshot?.source === "codex" && hasQuotaIdentity(state.snapshot.account)
-      && state.identity && state.availability.status !== "unknown" && age >= 0 && age <= this.context.policy.quotaMaxAgeMs ? state : null;
+      && state.identity && state.availability.status !== "unknown" && age >= 0 && age <= this.context.policy.quotaMaxAgeMs
+      && evaluateQuota(state.snapshot, this.context.policy, this.clock.now()).status !== "unknown" ? state : null;
   }
   list() {
     const now = this.clock.now().getTime();

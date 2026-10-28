@@ -55,7 +55,12 @@ export class TimedDispatch {
             const row = db.connection.prepare("SELECT data_json FROM runs WHERE id=?").get(o.runId);
             if (!row) throw new AppError("STORAGE_INVALID", "定时运行关联缺失。");
             const run = readRun(row.data_json);
-            if (!["queued", "waiting_quota"].includes(run.status)) {
+            if (["queued", "waiting_quota"].includes(run.status) && (run.turnId || db.connection.prepare("SELECT sequence FROM execution_events WHERE run_id=? AND type='submission_started'").get(run.id))) {
+              db.connection.prepare("UPDATE runs SET data_json=? WHERE id=?").run(JSON.stringify({ ...run, status: "needs_attention", error: "SUBMISSION_STATE_UNKNOWN: 已存在发送证据，请人工核对，不会自动重发。" }), run.id);
+              o.state = "finished"; o.reason = "needs_attention"; writeTimedOccurrence(db, o);
+              db.connection.prepare("UPDATE scheduler_control SET paused=1,reason='needs_attention',updated_at=? WHERE singleton=1").run(clock.now().toISOString());
+              timedNotice(db, clock, "timed_attention", p.id, o.id);
+            } else if (!["queued", "waiting_quota"].includes(run.status)) {
               o.state = run.status === "running" ? "dispatching" : "finished"; writeTimedOccurrence(db, o);
             }
           }
@@ -146,6 +151,11 @@ export class TimedDispatch {
     if (p.state !== "enabled" || p.revision !== o.planRevision || o.state !== "pending" || o.sequence === null
       || now < Date.parse(o.dueAt) || now > Date.parse(o.deadlineAt)) throw new AppError("TIMED_CONFLICT", "计划或执行时刻已变化，请重新核对。");
     let id = o.runId;
+    if (id) {
+      const row = db.connection.prepare("SELECT data_json FROM runs WHERE id=?").get(id);
+      if (!row) throw new AppError("STORAGE_INVALID", "定时运行关联缺失。");
+      if (readRun(row.data_json).turnId || db.connection.prepare("SELECT sequence FROM execution_events WHERE run_id=? AND type='submission_started'").get(id)) throw new AppError("TIMED_SUBMISSION_UNKNOWN", "记录已有发送证据，请人工核对；不会再次领取或重发。");
+    }
     if (!id) {
       id = randomUUID();
       const run: TaskRun = { id, taskId: p.input.taskId, taskRevision: p.task.revision, taskSnapshot: structuredClone(p.task.definition),

@@ -100,6 +100,27 @@ test("过去单次、模拟来源和未知额度不能静默启用", async () =>
   } finally { await e.cleanup(); }
 });
 
+test("缓存尚未达到最大年龄但服务端边界已到达时，启用确认仍要求完整查询", async () => {
+  const e = await setup("available", epoch + 10000); try {
+    const p = e.plans.save(input()), confirmation = e.plans.confirmation(p.id, p.revision); assert.equal(confirmation.canEnable, true);
+    e.advance(10000); assert.equal(e.plans.confirmation(p.id, p.revision).canEnable, false);
+    assert.throws(() => e.plans.enable(p.id, p.revision, confirmation.context!, true, false, false), { code: "TIMED_REQUIRES_QUOTA" });
+  } finally { await e.cleanup(); }
+});
+
+test("等待实例若已有发送边界证据则转人工核对并暂停，绝不再领取", async () => {
+  const e = await setup(); try {
+    e.enable(); const token = e.scheduler.acquire(); e.scheduler.resume(); e.advance(300000);
+    const d = e.scheduler.claimNext(token, e.sample()); assert.equal(d.action, "run"); if (d.action !== "run") return;
+    await e.finish(d.run.id, "waiting_quota"); e.scheduler.complete(token, d.run.id);
+    e.store.execution.event(d.run.id, "submission_started", {});
+    assert.equal(e.scheduler.claimNext(token, e.sample()).action, "wait");
+    assert.equal((await e.store.runs.get(d.run.id))!.status, "needs_attention"); assert.equal(e.scheduler.status().paused, true);
+    assert.equal(e.store.execution.active(), null); assert.equal((await e.store.runs.recent()).length, 1);
+    assert.equal(e.plans.list()[0]!.occurrences[0]!.state, "finished"); e.scheduler.release(token); await e.store.check();
+  } finally { await e.cleanup(); }
+});
+
 test("到时独立于 refresh 触发，不消耗凭据，不重复领取；初始暂停及互斥仍有效", async () => {
   const e = await setup("refresh"); try {
     const p = e.enable(), token = e.scheduler.acquire(); e.scheduler.resume();

@@ -15,7 +15,7 @@ export async function runtimeFiles({ desktop = false } = {}) {
     });
   files.push(...["index.html", "style.css"].map((name) => join("dist/src/management/public", name)),
     "config/example.json", "config/codex.example.json", "examples/tasks.json", "examples/prompts/review-project.md",
-    "README.md", "launch.cmd", "launch.sh");
+    "README.md", "docs/USER-MANUAL.html", "launch.cmd", "launch.sh");
   if (desktop) files.push("dist/src/desktop/public/startup.html", "dist/src/desktop/public/startup.css");
   files.push(...(await readdir(join(root, "docs"))).filter((name) => name.endsWith(".md")).map((name) => join("docs", name)));
   for (const path of files) if (!(await stat(join(root, path))).isFile()) throw new Error(`Missing package input: ${path}`);

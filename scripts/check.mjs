@@ -3,6 +3,14 @@ import { readdir, readFile } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
 import ts from "typescript";
 
+// Release assembly, installers and Electron all consume this version.
+const manifest = JSON.parse(await readFile("package.json", "utf8"));
+const lock = JSON.parse(await readFile("package-lock.json", "utf8"));
+if (!/^\d+\.\d+\.\d+$/.test(manifest.version) || lock.version !== manifest.version || lock.packages?.[""]?.version !== manifest.version) {
+  throw new Error("Package and lockfile versions must match");
+}
+await readFile(`docs/RELEASE-NOTES-${manifest.version}.md`, "utf8");
+
 // TypeScript's noEmit check does not parse browser scripts or build/test tooling.
 for (const directory of ["src", "scripts", "tests/fixtures"]) {
   for (const file of await readdir(directory, { recursive: true })) {
@@ -47,4 +55,4 @@ for (const file of await readdir("src/management/gui")) {
   }
   visit(source);
 }
-console.log("JavaScript syntax, domain/scheduler and browser module boundaries checked.");
+console.log("Package version, release notes, JavaScript syntax, domain/scheduler and browser module boundaries checked.");
